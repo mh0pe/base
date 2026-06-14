@@ -1,0 +1,10 @@
+{
+  "name": "base",
+  "version": "3.1.5",
+  "description": "BASE — Builder's Automated State Engine: workspace lifecycle management, data surfaces, and audit tooling for Claude Code.",
+  "author": {
+    "name": "Chris Kahler"
+  },
+  "license": "MIT",
+  "homepage": "https://github.com/ChristopherKahler/base#readme"
+}
