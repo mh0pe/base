@@ -11,3 +11,4 @@ DIRECTORY-STRATEGY-SPEC.md
 
 # Node
 node_modules/
+__pycache__/
