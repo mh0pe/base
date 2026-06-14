@@ -11,4 +11,8 @@ DIRECTORY-STRATEGY-SPEC.md
 
 # Node
 node_modules/
+# mcp/node_modules is created as a symlink by the SessionStart hook;
+# the trailing-slash pattern above matches directories but NOT symlinks,
+# so we add a slash-less entry to cover the symlink case as well.
+mcp/node_modules
 __pycache__/
