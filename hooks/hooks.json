@@ -50,6 +50,14 @@
             "command": "python3.11 \"${CLAUDE_PLUGIN_ROOT}/hooks/satellite-detection.py\""
           }
         ]
+      },
+      {
+        "hooks": [
+          {
+            "type": "command",
+            "command": "python3.11 \"${CLAUDE_PLUGIN_ROOT}/hooks/install-mcp-deps.py\""
+          }
+        ]
       }
     ]
   }
