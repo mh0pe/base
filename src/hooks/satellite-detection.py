@@ -15,6 +15,7 @@ Sync flow (paul.json → workspace.json → projects.json):
   Respects satellite.sync: false as opt-out for steps 3-4.
 """
 
+import os
 import sys
 import json
 from datetime import datetime
@@ -22,7 +23,10 @@ from pathlib import Path
 
 # Workspace root — find .base/ relative to this hook's location
 HOOK_DIR = Path(__file__).resolve().parent
-WORKSPACE_ROOT = HOOK_DIR.parent.parent  # hooks/ -> .base/ -> workspace
+if os.environ.get('CLAUDE_PROJECT_DIR', '').strip():
+    WORKSPACE_ROOT = Path(os.environ['CLAUDE_PROJECT_DIR']).resolve()
+else:
+    WORKSPACE_ROOT = HOOK_DIR.parent.parent  # hooks/ -> .base/ -> workspace
 BASE_DIR = WORKSPACE_ROOT / ".base"
 MANIFEST_FILE = BASE_DIR / "workspace.json"
 PROJECTS_FILE = BASE_DIR / "data" / "projects.json"

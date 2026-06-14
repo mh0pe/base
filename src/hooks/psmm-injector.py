@@ -13,12 +13,16 @@ Triggers: UserPromptSubmit
 Output: Current session's PSMM entries as system context, or silent if empty.
 """
 
+import os
 import sys
 import json
 from pathlib import Path
 
 HOOK_DIR = Path(__file__).resolve().parent
-WORKSPACE_ROOT = HOOK_DIR.parent.parent
+if os.environ.get('CLAUDE_PROJECT_DIR', '').strip():
+    WORKSPACE_ROOT = Path(os.environ['CLAUDE_PROJECT_DIR']).resolve()
+else:
+    WORKSPACE_ROOT = HOOK_DIR.parent.parent
 PSMM_FILE = WORKSPACE_ROOT / ".base" / "data" / "psmm.json"
 
 

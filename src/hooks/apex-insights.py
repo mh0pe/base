@@ -5,13 +5,17 @@ Computes velocity, stall detection, blocking analysis, workload, and dependency 
 Invoked by /apex:insights slash command via !command injection.
 """
 
+import os
 import json
 import sys
 from datetime import datetime, date
 from pathlib import Path
 from collections import defaultdict
 
-WORKSPACE = Path(__file__).resolve().parent.parent.parent
+if os.environ.get('CLAUDE_PROJECT_DIR', '').strip():
+    WORKSPACE = Path(os.environ['CLAUDE_PROJECT_DIR']).resolve()
+else:
+    WORKSPACE = Path(__file__).resolve().parent.parent.parent
 PROJECTS_FILE = WORKSPACE / ".base" / "data" / "projects.json"
 WORKSPACE_JSON = WORKSPACE / ".base" / "workspace.json"
 

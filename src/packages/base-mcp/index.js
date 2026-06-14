@@ -27,7 +27,7 @@ import { TOOLS as satelliteTools, handleTool as handleSatellite } from './tools/
 
 // Resolve workspace from this file's location: base-mcp/ → .base/ → workspace root
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
-const WORKSPACE_PATH = path.resolve(__dirname, '../..');
+const WORKSPACE_PATH = (process.env.CLAUDE_PROJECT_DIR && process.env.CLAUDE_PROJECT_DIR.trim()) ? path.resolve(process.env.CLAUDE_PROJECT_DIR.trim()) : path.resolve(__dirname, '../..');
 
 function debugLog(...args) {
     console.error('[BASE]', new Date().toISOString(), ...args);
