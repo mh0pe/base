@@ -69,6 +69,23 @@ function parseWorkspaceDirArg() {
 const explicitWorkspaceDir = parseWorkspaceDirArg();
 const hasHelp = args.includes('--help') || args.includes('-h');
 
+// Parse --skills-dir flag and optional --dir <path>
+const hasSkillsDir = args.includes('--skills-dir');
+
+function parseSkillsDirTarget() {
+  const idx = args.findIndex(arg => arg === '--dir');
+  if (idx !== -1) {
+    const nextArg = args[idx + 1];
+    if (!nextArg || nextArg.startsWith('-')) {
+      console.error(`  ${yellow}--dir requires a path argument${reset}`);
+      process.exit(1);
+    }
+    return nextArg;
+  }
+  return null;
+}
+const explicitSkillsDirTarget = parseSkillsDirTarget();
+
 console.log(banner);
 
 // Show help if requested
@@ -81,6 +98,7 @@ if (hasHelp) {
     ${cyan}-w, --workspace${reset}              Install workspace layer (.base/ in current directory)
     ${cyan}-c, --config-dir <path>${reset}      Specify custom Claude config directory
     ${cyan}--workspace-dir <path>${reset}        Specify workspace root (default: cwd)
+    ${cyan}--skills-dir [--dir <path>]${reset}  Install as a self-contained Claude Code skills-dir plugin
     ${cyan}-h, --help${reset}                   Show this help message
 
   ${yellow}Examples:${reset}
@@ -514,6 +532,150 @@ function installWorkspace() {
 }
 
 /**
+ * Rewrite @~/.claude/base-framework/ and @./.claude/base-framework/ refs
+ * to ${CLAUDE_PLUGIN_ROOT}/base-framework/ in the given text.
+ */
+function rewriteBaseFrameworkRefs(text) {
+  text = text.replace(/@~\/\.claude\/base-framework\//g, '@${CLAUDE_PLUGIN_ROOT}/base-framework/');
+  text = text.replace(/@\.\/\.claude\/base-framework\//g, '@${CLAUDE_PLUGIN_ROOT}/base-framework/');
+  return text;
+}
+
+/**
+ * Install as a self-contained Claude Code skills-dir plugin.
+ * Target: --dir <path> or default <cwd>/.claude/skills/base/
+ */
+function installSkillsDir() {
+  const src = path.join(__dirname, '..');
+  const targetBase = explicitSkillsDirTarget
+    ? path.resolve(expandTilde(explicitSkillsDirTarget))
+    : path.join(process.cwd(), '.claude', 'skills', 'base');
+
+  const pluginDir = path.join(targetBase, '.claude-plugin');
+  const commandsDir = path.join(targetBase, 'commands');
+  const skillsDir = path.join(targetBase, 'skills');
+  const frameworkDir = path.join(targetBase, 'base-framework');
+  const hooksDir = path.join(targetBase, 'hooks');
+  const mcpDir = path.join(targetBase, 'mcp');
+
+  const targetLabel = targetBase.replace(os.homedir(), '~').replace(process.cwd(), '.');
+  console.log(`  Installing skills-dir plugin to ${cyan}${targetLabel}${reset}\n`);
+
+  // Create plugin manifest
+  fs.mkdirSync(pluginDir, { recursive: true });
+  const pluginJson = {
+    name: 'base',
+    version: pkg.version,
+    description: "Builder's Automated State Engine — workspace lifecycle management for Claude Code. Scaffold, audit, groom, and maintain AI builder workspaces."
+  };
+  fs.writeFileSync(path.join(pluginDir, 'plugin.json'), JSON.stringify(pluginJson, null, 2));
+  console.log(`  ${green}+${reset} .claude-plugin/plugin.json`);
+
+  // Copy commands — rewrite base-framework refs in each .md file
+  const commandsSrc = path.join(src, 'src', 'commands');
+  fs.mkdirSync(commandsDir, { recursive: true });
+  const copyDirRewritingRefs = (srcDir, destDir) => {
+    fs.mkdirSync(destDir, { recursive: true });
+    const entries = fs.readdirSync(srcDir, { withFileTypes: true });
+    for (const entry of entries) {
+      const srcPath = path.join(srcDir, entry.name);
+      const destPath = path.join(destDir, entry.name);
+      if (entry.isDirectory()) {
+        copyDirRewritingRefs(srcPath, destPath);
+      } else if (entry.name.endsWith('.md')) {
+        const content = fs.readFileSync(srcPath, 'utf-8');
+        fs.writeFileSync(destPath, rewriteBaseFrameworkRefs(content));
+      } else {
+        fs.copyFileSync(srcPath, destPath);
+      }
+    }
+  };
+  copyDirRewritingRefs(commandsSrc, commandsDir);
+  const commandCount = fs.readdirSync(commandsSrc).filter(f => f.endsWith('.md')).length;
+  console.log(`  ${green}+${reset} commands/ (${commandCount} slash commands, refs rewritten)`);
+
+  // Copy skill entry point — rewrite refs
+  const skillSrc = path.join(src, 'src', 'skill');
+  fs.mkdirSync(skillsDir, { recursive: true });
+  copyDirRewritingRefs(skillSrc, skillsDir);
+  console.log(`  ${green}+${reset} skills/ (entry point)`);
+
+  // Copy BASE framework — tasks, templates, context, frameworks
+  const frameworkSrc = path.join(src, 'src', 'framework');
+  copyDirRewritingRefs(frameworkSrc, frameworkDir);
+  // Copy hooks into base-framework/hooks/ (for scaffold reference)
+  const hooksFrameworkDest = path.join(frameworkDir, 'hooks');
+  fs.mkdirSync(hooksFrameworkDest, { recursive: true });
+  const hooksSrcDir = path.join(src, 'src', 'hooks');
+  const hookFiles = fs.readdirSync(hooksSrcDir).filter(f => f.endsWith('.py'));
+  for (const hookFile of hookFiles) {
+    fs.copyFileSync(path.join(hooksSrcDir, hookFile), path.join(hooksFrameworkDest, hookFile));
+  }
+  // Copy MCP package into base-framework/packages/base-mcp/
+  const fwPkgDest = path.join(frameworkDir, 'packages', 'base-mcp');
+  fs.mkdirSync(fwPkgDest, { recursive: true });
+  copyDir(path.join(src, 'src', 'packages', 'base-mcp'), fwPkgDest);
+  console.log(`  ${green}+${reset} base-framework/ (tasks, templates, context, frameworks, hooks, packages)`);
+
+  // Copy hooks/ as standalone directory
+  fs.mkdirSync(hooksDir, { recursive: true });
+  for (const hookFile of hookFiles) {
+    fs.copyFileSync(path.join(hooksSrcDir, hookFile), path.join(hooksDir, hookFile));
+  }
+  console.log(`  ${green}+${reset} hooks/ (${hookFiles.length} hook scripts)`);
+
+  // Write hooks.json — wires base's hooks using ${CLAUDE_PLUGIN_ROOT} paths
+  const hooksJson = {
+    hooks: {
+      UserPromptSubmit: [
+        {
+          hooks: [
+            { type: 'command', command: 'python3 ${CLAUDE_PLUGIN_ROOT}/hooks/active-hook.py' },
+            { type: 'command', command: 'python3 ${CLAUDE_PLUGIN_ROOT}/hooks/backlog-hook.py' },
+            { type: 'command', command: 'python3 ${CLAUDE_PLUGIN_ROOT}/hooks/base-pulse-check.py' },
+            { type: 'command', command: 'python3 ${CLAUDE_PLUGIN_ROOT}/hooks/psmm-injector.py' },
+            { type: 'command', command: 'python3 ${CLAUDE_PLUGIN_ROOT}/hooks/operator.py' }
+          ]
+        }
+      ],
+      SessionStart: [
+        {
+          hooks: [
+            { type: 'command', command: 'python3 ${CLAUDE_PLUGIN_ROOT}/hooks/satellite-detection.py' }
+          ]
+        }
+      ]
+    }
+  };
+  fs.writeFileSync(path.join(hooksDir, 'hooks.json'), JSON.stringify(hooksJson, null, 2));
+  console.log(`  ${green}+${reset} hooks/hooks.json (UserPromptSubmit + SessionStart wiring)`);
+
+  // Copy MCP package into mcp/base-mcp/
+  const mcpPkgDest = path.join(mcpDir, 'base-mcp');
+  fs.mkdirSync(mcpPkgDest, { recursive: true });
+  copyDir(path.join(src, 'src', 'packages', 'base-mcp'), mcpPkgDest);
+  console.log(`  ${green}+${reset} mcp/base-mcp/ (MCP server source)`);
+
+  // Write .mcp.json with ${CLAUDE_PLUGIN_ROOT} paths
+  const mcpJson = {
+    mcpServers: {
+      'base-mcp': {
+        type: 'stdio',
+        command: 'node',
+        args: ['${CLAUDE_PLUGIN_ROOT}/mcp/base-mcp/index.js']
+      }
+    }
+  };
+  fs.writeFileSync(path.join(mcpDir, '.mcp.json'), JSON.stringify(mcpJson, null, 2));
+  console.log(`  ${green}+${reset} mcp/.mcp.json (base-mcp registered with plugin-root path)`);
+
+  console.log(`\n  ${green}Skills-dir plugin installed.${reset}`);
+  console.log(`  ${dim}Loads next session as base@skills-dir (no marketplace/install).${reset}`);
+  console.log(`  ${dim}Trust the workspace if prompted.${reset}`);
+  console.log(`  ${dim}For Claude Code Cloud, commit .claude/skills/base/.${reset}\n`);
+}
+
+/**
  * Prompt for install location
  */
 function promptLocation() {
@@ -554,6 +716,11 @@ function promptLocation() {
 async function main() {
   if (hasHelp) {
     return; // Already handled above
+  }
+
+  if (hasSkillsDir) {
+    installSkillsDir();
+    return;
   }
 
   if (hasGlobal || hasLocal || hasWorkspace) {
