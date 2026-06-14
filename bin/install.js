@@ -666,8 +666,8 @@ function installSkillsDir() {
       }
     }
   };
-  fs.writeFileSync(path.join(mcpDir, '.mcp.json'), JSON.stringify(mcpJson, null, 2));
-  console.log(`  ${green}+${reset} mcp/.mcp.json (base-mcp registered with plugin-root path)`);
+  fs.writeFileSync(path.join(targetBase, '.mcp.json'), JSON.stringify(mcpJson, null, 2));
+  console.log(`  ${green}+${reset} .mcp.json (base-mcp registered at plugin root with CLAUDE_PLUGIN_ROOT path)`);
 
   console.log(`\n  ${green}Skills-dir plugin installed.${reset}`);
   console.log(`  ${dim}Loads next session as base@skills-dir (no marketplace/install).${reset}`);
@@ -719,6 +719,10 @@ async function main() {
   }
 
   if (hasSkillsDir) {
+    if (hasGlobal || hasLocal) {
+      console.error(`  ${yellow}Cannot combine --skills-dir with --global or --local${reset}`);
+      process.exit(1);
+    }
     installSkillsDir();
     return;
   }
