@@ -1,0 +1,64 @@
+{
+  "hooks": {
+    "UserPromptSubmit": [
+      {
+        "hooks": [
+          {
+            "type": "command",
+            "command": "python3.11 \"${CLAUDE_PLUGIN_ROOT}/hooks/psmm-injector.py\""
+          }
+        ]
+      },
+      {
+        "hooks": [
+          {
+            "type": "command",
+            "command": "python3.11 \"${CLAUDE_PLUGIN_ROOT}/hooks/active-hook.py\""
+          }
+        ]
+      },
+      {
+        "hooks": [
+          {
+            "type": "command",
+            "command": "python3.11 \"${CLAUDE_PLUGIN_ROOT}/hooks/backlog-hook.py\""
+          }
+        ]
+      },
+      {
+        "hooks": [
+          {
+            "type": "command",
+            "command": "python3.11 \"${CLAUDE_PLUGIN_ROOT}/hooks/base-pulse-check.py\""
+          }
+        ]
+      },
+      {
+        "hooks": [
+          {
+            "type": "command",
+            "command": "python3.11 \"${CLAUDE_PLUGIN_ROOT}/hooks/operator.py\""
+          }
+        ]
+      }
+    ],
+    "SessionStart": [
+      {
+        "hooks": [
+          {
+            "type": "command",
+            "command": "python3.11 \"${CLAUDE_PLUGIN_ROOT}/hooks/satellite-detection.py\""
+          }
+        ]
+      },
+      {
+        "hooks": [
+          {
+            "type": "command",
+            "command": "python3.11 \"${CLAUDE_PLUGIN_ROOT}/hooks/install-mcp-deps.py\""
+          }
+        ]
+      }
+    ]
+  }
+}
