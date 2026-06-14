@@ -69,6 +69,23 @@ function parseWorkspaceDirArg() {
 const explicitWorkspaceDir = parseWorkspaceDirArg();
 const hasHelp = args.includes('--help') || args.includes('-h');
 
+// Parse --skills-dir flag and optional --dir <path>
+const hasSkillsDir = args.includes('--skills-dir');
+
+function parseSkillsDirTarget() {
+  const idx = args.findIndex(arg => arg === '--dir');
+  if (idx !== -1) {
+    const nextArg = args[idx + 1];
+    if (!nextArg || nextArg.startsWith('-')) {
+      console.error(`  ${yellow}--dir requires a path argument${reset}`);
+      process.exit(1);
+    }
+    return nextArg;
+  }
+  return null;
+}
+const explicitSkillsDirTarget = parseSkillsDirTarget();
+
 console.log(banner);
 
 // Show help if requested
@@ -81,6 +98,7 @@ if (hasHelp) {
     ${cyan}-w, --workspace${reset}              Install workspace layer (.base/ in current directory)
     ${cyan}-c, --config-dir <path>${reset}      Specify custom Claude config directory
     ${cyan}--workspace-dir <path>${reset}        Specify workspace root (default: cwd)
+    ${cyan}--skills-dir [--dir <path>]${reset}  Install as a self-contained Claude Code skills-dir plugin
     ${cyan}-h, --help${reset}                   Show this help message
 
   ${yellow}Examples:${reset}
@@ -557,6 +575,166 @@ function installWorkspace() {
 }
 
 /**
+ * Rewrite @~/.claude/base-framework/ and @./.claude/base-framework/ refs
+ * to ${CLAUDE_PLUGIN_ROOT}/base-framework/ in the given text.
+ */
+function rewriteBaseFrameworkRefs(text) {
+  text = text.replace(/@~\/\.claude\/base-framework\//g, '@${CLAUDE_PLUGIN_ROOT}/base-framework/');
+  text = text.replace(/@\.\/\.claude\/base-framework\//g, '@${CLAUDE_PLUGIN_ROOT}/base-framework/');
+  return text;
+}
+
+/**
+ * Install as a self-contained Claude Code skills-dir plugin.
+ * Target: --dir <path> or default <cwd>/.claude/skills/base/
+ */
+function installSkillsDir() {
+  const src = path.join(__dirname, '..');
+  const targetBase = explicitSkillsDirTarget
+    ? path.resolve(expandTilde(explicitSkillsDirTarget))
+    : path.join(process.cwd(), '.claude', 'skills', 'base');
+
+  const pluginDir = path.join(targetBase, '.claude-plugin');
+  const commandsDir = path.join(targetBase, 'commands');
+  const skillsDir = path.join(targetBase, 'skills');
+  const frameworkDir = path.join(targetBase, 'base-framework');
+  const hooksDir = path.join(targetBase, 'hooks');
+  const mcpDir = path.join(targetBase, 'mcp');
+
+  const targetLabel = targetBase.replace(os.homedir(), '~').replace(process.cwd(), '.');
+  console.log(`  Installing skills-dir plugin to ${cyan}${targetLabel}${reset}\n`);
+
+  // Create plugin manifest
+  fs.mkdirSync(pluginDir, { recursive: true });
+  const pluginJson = {
+    name: 'base',
+    version: pkg.version,
+    description: "Builder's Automated State Engine — workspace lifecycle management for Claude Code. Scaffold, audit, groom, and maintain AI builder workspaces."
+  };
+  fs.writeFileSync(path.join(pluginDir, 'plugin.json'), JSON.stringify(pluginJson, null, 2));
+  console.log(`  ${green}+${reset} .claude-plugin/plugin.json`);
+
+  // Copy commands — rewrite base-framework refs in each .md file
+  // Source: root commands/ (converged single source tree from feat/native-plugin)
+  const commandsSrc = path.join(src, 'commands');
+  fs.mkdirSync(commandsDir, { recursive: true });
+  const copyDirRewritingRefs = (srcDir, destDir) => {
+    fs.mkdirSync(destDir, { recursive: true });
+    const entries = fs.readdirSync(srcDir, { withFileTypes: true });
+    for (const entry of entries) {
+      const srcPath = path.join(srcDir, entry.name);
+      const destPath = path.join(destDir, entry.name);
+      if (entry.isDirectory()) {
+        copyDirRewritingRefs(srcPath, destPath);
+      } else if (entry.name.endsWith('.md')) {
+        const content = fs.readFileSync(srcPath, 'utf-8');
+        fs.writeFileSync(destPath, rewriteBaseFrameworkRefs(content));
+      } else {
+        fs.copyFileSync(srcPath, destPath);
+      }
+    }
+  };
+  copyDirRewritingRefs(commandsSrc, commandsDir);
+  const commandCount = fs.readdirSync(commandsSrc).filter(f => f.endsWith('.md')).length;
+  console.log(`  ${green}+${reset} commands/ (${commandCount} slash commands, refs rewritten)`);
+
+  // Copy skill entry point — rewrite refs
+  // Source: root skills/base/ (converged single source tree)
+  const skillSrc = path.join(src, 'skills', 'base');
+  fs.mkdirSync(skillsDir, { recursive: true });
+  copyDirRewritingRefs(skillSrc, skillsDir);
+  console.log(`  ${green}+${reset} skills/ (entry point)`);
+
+  // Copy BASE framework — tasks, templates, context, frameworks
+  // Source: root base-framework/ (converged single source tree)
+  const frameworkSrc = path.join(src, 'base-framework');
+  copyDirRewritingRefs(frameworkSrc, frameworkDir);
+  // Copy hooks into base-framework/hooks/ (for scaffold reference)
+  const hooksFrameworkDest = path.join(frameworkDir, 'hooks');
+  fs.mkdirSync(hooksFrameworkDest, { recursive: true });
+  // Source: root hooks/ (converged single source tree)
+  const hooksSrcDir = path.join(src, 'hooks');
+  const hookFiles = fs.readdirSync(hooksSrcDir).filter(f => f.endsWith('.py'));
+  for (const hookFile of hookFiles) {
+    fs.copyFileSync(path.join(hooksSrcDir, hookFile), path.join(hooksFrameworkDest, hookFile));
+  }
+  // Copy MCP source into base-framework/packages/base-mcp/ (global source for scaffold)
+  // Source: root mcp/ (flat layout — index.js lives at mcp/index.js)
+  const fwPkgDest = path.join(frameworkDir, 'packages', 'base-mcp');
+  fs.mkdirSync(fwPkgDest, { recursive: true });
+  copyDir(path.join(src, 'mcp'), fwPkgDest, null);
+  console.log(`  ${green}+${reset} base-framework/ (tasks, templates, context, frameworks, hooks, packages)`);
+
+  // Copy hooks/ as standalone directory
+  fs.mkdirSync(hooksDir, { recursive: true });
+  for (const hookFile of hookFiles) {
+    fs.copyFileSync(path.join(hooksSrcDir, hookFile), path.join(hooksDir, hookFile));
+  }
+  // Copy the committed install-mcp-deps.py from root hooks/ (single source of truth — no heredoc dupe)
+  const installMcpDepsSrc = path.join(src, 'hooks', 'install-mcp-deps.py');
+  if (fs.existsSync(installMcpDepsSrc)) {
+    fs.copyFileSync(installMcpDepsSrc, path.join(hooksDir, 'install-mcp-deps.py'));
+  }
+  console.log(`  ${green}+${reset} hooks/ (${hookFiles.length} hook scripts + install-mcp-deps.py)`);
+
+  // Write hooks.json — wires base's hooks using ${CLAUDE_PLUGIN_ROOT} paths
+  const hooksJson = {
+    hooks: {
+      UserPromptSubmit: [
+        {
+          hooks: [
+            { type: 'command', command: 'python3 ${CLAUDE_PLUGIN_ROOT}/hooks/active-hook.py' },
+            { type: 'command', command: 'python3 ${CLAUDE_PLUGIN_ROOT}/hooks/backlog-hook.py' },
+            { type: 'command', command: 'python3 ${CLAUDE_PLUGIN_ROOT}/hooks/base-pulse-check.py' },
+            { type: 'command', command: 'python3 ${CLAUDE_PLUGIN_ROOT}/hooks/psmm-injector.py' },
+            { type: 'command', command: 'python3 ${CLAUDE_PLUGIN_ROOT}/hooks/operator.py' }
+          ]
+        }
+      ],
+      SessionStart: [
+        {
+          hooks: [
+            { type: 'command', command: 'python3 ${CLAUDE_PLUGIN_ROOT}/hooks/satellite-detection.py' },
+            { type: 'command', command: 'python3 ${CLAUDE_PLUGIN_ROOT}/hooks/install-mcp-deps.py' }
+          ]
+        }
+      ]
+    }
+  };
+  fs.writeFileSync(path.join(hooksDir, 'hooks.json'), JSON.stringify(hooksJson, null, 2));
+  console.log(`  ${green}+${reset} hooks/hooks.json (UserPromptSubmit x5 + SessionStart x2: satellite-detection + install-mcp-deps)`);
+
+  // Copy MCP source into mcp/ (flat layout — index.js at mcp/index.js)
+  // Source: root mcp/ (converged single source tree)
+  fs.mkdirSync(mcpDir, { recursive: true });
+  copyDir(path.join(src, 'mcp'), mcpDir, null);
+  console.log(`  ${green}+${reset} mcp/ (MCP server source — flat layout)`);
+
+  // Write .mcp.json at plugin root with NODE_PATH + CLAUDE_PROJECT_DIR env
+  // Points at mcp/index.js (flat layout, symlink at mcp/node_modules set by install-mcp-deps.py)
+  const mcpJson = {
+    mcpServers: {
+      'base-mcp': {
+        type: 'stdio',
+        command: 'node',
+        args: ['${CLAUDE_PLUGIN_ROOT}/mcp/index.js'],
+        env: {
+          CLAUDE_PROJECT_DIR: '${CLAUDE_PROJECT_DIR}',
+          NODE_PATH: '${CLAUDE_PLUGIN_DATA}/node_modules'
+        }
+      }
+    }
+  };
+  fs.writeFileSync(path.join(targetBase, '.mcp.json'), JSON.stringify(mcpJson, null, 2));
+  console.log(`  ${green}+${reset} .mcp.json (base-mcp at mcp/index.js; NODE_PATH + CLAUDE_PROJECT_DIR in env)`);
+
+  console.log(`\n  ${green}Skills-dir plugin installed.${reset}`);
+  console.log(`  ${dim}Loads next session as base@skills-dir (no marketplace/install).${reset}`);
+  console.log(`  ${dim}Trust the workspace if prompted.${reset}`);
+  console.log(`  ${dim}For Claude Code Cloud, commit .claude/skills/base/.${reset}\n`);
+}
+
+/**
  * Prompt for install location
  */
 function promptLocation() {
@@ -597,6 +775,15 @@ function promptLocation() {
 async function main() {
   if (hasHelp) {
     return; // Already handled above
+  }
+
+  if (hasSkillsDir) {
+    if (hasGlobal || hasLocal) {
+      console.error(`  ${yellow}Cannot combine --skills-dir with --global or --local${reset}`);
+      process.exit(1);
+    }
+    installSkillsDir();
+    return;
   }
 
   if (hasGlobal || hasLocal || hasWorkspace) {
