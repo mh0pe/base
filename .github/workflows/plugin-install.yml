@@ -20,7 +20,7 @@ jobs:
       - name: Install smoke test (claude can install the plugin)
         run: |
           set -euo pipefail
-          claude plugin marketplace add .
+          claude plugin marketplace add ./
           claude plugin install base@base
           claude plugin list
           claude plugin list | grep -i base
