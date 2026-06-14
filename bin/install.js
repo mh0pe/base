@@ -125,19 +125,57 @@ function expandTilde(filePath) {
   return filePath;
 }
 
+// Text file suffixes that may contain ${CLAUDE_PLUGIN_ROOT} macro refs.
+const TEXT_SUFFIXES = new Set(['.md', '.json', '.js', '.mjs', '.py', '.txt', '.toml', '.yaml', '.yml', '.sh']);
+
 /**
- * Recursively copy directory
+ * Expand ${CLAUDE_PLUGIN_ROOT} in a text file during npx copy.
+ * When install.js runs via npx, CLAUDE_PLUGIN_ROOT is not set; the macro
+ * is replaced with the actual install target so no literal placeholder
+ * remains in the installed output. Idempotent: files without the macro are
+ * copied byte-for-byte (the Buffer fast-path below detects that case).
  */
-function copyDir(srcDir, destDir) {
+function copyFileExpandingMacro(srcPath, destPath, pluginRoot) {
+  const ext = path.extname(srcPath).toLowerCase();
+  if (!pluginRoot || (!TEXT_SUFFIXES.has(ext) && ext !== '')) {
+    // Non-text or no macro expansion needed — byte-for-byte copy.
+    fs.copyFileSync(srcPath, destPath);
+    return;
+  }
+  let content;
+  try {
+    content = fs.readFileSync(srcPath, 'utf8');
+  } catch {
+    // Binary read failed — fall back to byte copy.
+    fs.copyFileSync(srcPath, destPath);
+    return;
+  }
+  if (!content.includes('${CLAUDE_PLUGIN_ROOT}')) {
+    // Fast path: no macro present — write as-is.
+    fs.writeFileSync(destPath, content, 'utf8');
+    return;
+  }
+  // Replace ALL occurrences of ${CLAUDE_PLUGIN_ROOT} with the real path.
+  const expanded = content.split('${CLAUDE_PLUGIN_ROOT}').join(pluginRoot);
+  fs.writeFileSync(destPath, expanded, 'utf8');
+}
+
+/**
+ * Recursively copy directory, expanding ${CLAUDE_PLUGIN_ROOT} in text files.
+ * pluginRoot is the resolved install target (e.g. ~/.claude or ./.claude)
+ * so that any plugin-native refs in the source are grounded to real paths
+ * in the npx-installed output.
+ */
+function copyDir(srcDir, destDir, pluginRoot) {
   fs.mkdirSync(destDir, { recursive: true });
   const entries = fs.readdirSync(srcDir, { withFileTypes: true });
   for (const entry of entries) {
     const srcPath = path.join(srcDir, entry.name);
     const destPath = path.join(destDir, entry.name);
     if (entry.isDirectory()) {
-      copyDir(srcPath, destPath);
+      copyDir(srcPath, destPath, pluginRoot);
     } else {
-      fs.copyFileSync(srcPath, destPath);
+      copyFileExpandingMacro(srcPath, destPath, pluginRoot);
     }
   }
 }
