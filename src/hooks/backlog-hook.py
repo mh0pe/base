@@ -9,6 +9,7 @@ Drop-in replacement for backlog-hook.py. Swap in settings.json when ready.
 Legacy backlog-hook.py reads from .base/data/backlog.json (unchanged).
 """
 
+import os
 import sys
 import json
 from pathlib import Path
@@ -17,7 +18,10 @@ from datetime import date
 SURFACE_NAME = "backlog"
 
 HOOK_DIR = Path(__file__).resolve().parent
-WORKSPACE_ROOT = HOOK_DIR.parent.parent
+if os.environ.get('CLAUDE_PROJECT_DIR', '').strip():
+    WORKSPACE_ROOT = Path(os.environ['CLAUDE_PROJECT_DIR']).resolve()
+else:
+    WORKSPACE_ROOT = HOOK_DIR.parent.parent
 DATA_FILE = WORKSPACE_ROOT / ".base" / "data" / "projects.json"
 
 BEHAVIOR_DIRECTIVE = f"""BEHAVIOR: This context is PASSIVE AWARENESS ONLY.

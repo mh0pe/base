@@ -11,13 +11,17 @@ Drop-in replacement for base-pulse-check.py. Swap in settings.json when ready.
 Legacy base-pulse-check.py reads STATE.md + workspace.json (unchanged).
 """
 
+import os
 import sys
 import json
 from datetime import datetime, date
 from pathlib import Path
 
 HOOK_DIR = Path(__file__).resolve().parent
-WORKSPACE_ROOT = HOOK_DIR.parent.parent
+if os.environ.get('CLAUDE_PROJECT_DIR', '').strip():
+    WORKSPACE_ROOT = Path(os.environ['CLAUDE_PROJECT_DIR']).resolve()
+else:
+    WORKSPACE_ROOT = HOOK_DIR.parent.parent
 BASE_DIR = WORKSPACE_ROOT / ".base"
 STATE_FILE = BASE_DIR / "data" / "state.json"
 PROJECTS_FILE = BASE_DIR / "data" / "projects.json"
