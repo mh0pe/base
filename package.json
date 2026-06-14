@@ -7,11 +7,11 @@
   },
   "files": [
     "bin",
-    "src/commands",
-    "src/skill",
-    "src/framework",
-    "src/packages",
-    "src/hooks",
+    "commands",
+    "skills",
+    "base-framework",
+    "mcp",
+    "hooks",
     "src/templates",
     "schemas",
     "README.md"

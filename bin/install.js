@@ -385,43 +385,42 @@ function installCommands(isGlobal) {
 
   console.log(`  Installing commands to ${cyan}${locationLabel}${reset}\n`);
 
-  // Copy commands
-  const commandsSrc = path.join(src, 'src', 'commands');
+  // Copy commands (root tree, ${CLAUDE_PLUGIN_ROOT} → resolved claudeDir)
+  const commandsSrc = path.join(src, 'commands');
   const commandsDest = path.join(claudeDir, 'commands', 'base');
-  copyDir(commandsSrc, commandsDest);
+  copyDir(commandsSrc, commandsDest, claudeDir);
   const commandCount = fs.readdirSync(commandsSrc).filter(f => f.endsWith('.md')).length;
   console.log(`  ${green}+${reset} commands/base/ (${commandCount} slash commands)`);
 
-  // Copy skill entry point
-  const skillSrc = path.join(src, 'src', 'skill');
+  // Copy skill entry point (root tree)
+  const skillSrc = path.join(src, 'skills', 'base');
   const skillDest = path.join(claudeDir, 'skills', 'base');
-  copyDir(skillSrc, skillDest);
-  console.log(`  ${green}+${reset} skills/base/ (entry point + MCP package sources)`);
-
-  // Copy MCP package sources into skill (for scaffold reference)
-  const packagesSrc = path.join(src, 'src', 'packages');
-  const packagesDest = path.join(claudeDir, 'skills', 'base', 'packages');
-  copyDir(packagesSrc, packagesDest);
+  copyDir(skillSrc, skillDest, claudeDir);
+  console.log(`  ${green}+${reset} skills/base/ (entry point)`);
 
   // Copy MCP package to base-framework/packages/ (global source for scaffold)
   const frameworkPackagesDest = path.join(claudeDir, 'base-framework', 'packages', 'base-mcp');
   fs.mkdirSync(frameworkPackagesDest, { recursive: true });
-  copyDir(path.join(src, 'src', 'packages', 'base-mcp'), frameworkPackagesDest);
+  copyDir(path.join(src, 'mcp'), frameworkPackagesDest, claudeDir);
   console.log(`  ${green}+${reset} base-framework/packages/base-mcp/ (global MCP source for scaffold)`);
 
-  // Copy BASE framework (tasks, templates, context, frameworks)
-  const frameworkSrc = path.join(src, 'src', 'framework');
+  // Copy BASE framework (tasks, templates, context, frameworks) from root tree
+  const frameworkSrc = path.join(src, 'base-framework');
   const frameworkDest = path.join(claudeDir, 'base-framework');
-  copyDir(frameworkSrc, frameworkDest);
+  copyDir(frameworkSrc, frameworkDest, claudeDir);
   console.log(`  ${green}+${reset} base-framework/ (tasks, templates, context, frameworks, utils)`);
 
-  // Copy all hooks to base-framework/hooks/ (source for scaffold)
+  // Copy all hooks to base-framework/hooks/ (source for scaffold), from root tree
   const hooksFrameworkDest = path.join(claudeDir, 'base-framework', 'hooks');
   fs.mkdirSync(hooksFrameworkDest, { recursive: true });
-  const hooksSrcDir = path.join(src, 'src', 'hooks');
+  const hooksSrcDir = path.join(src, 'hooks');
   const hookFiles = fs.readdirSync(hooksSrcDir).filter(f => f.endsWith('.py'));
   for (const hookFile of hookFiles) {
-    fs.copyFileSync(path.join(hooksSrcDir, hookFile), path.join(hooksFrameworkDest, hookFile));
+    copyFileExpandingMacro(
+      path.join(hooksSrcDir, hookFile),
+      path.join(hooksFrameworkDest, hookFile),
+      claudeDir
+    );
   }
   console.log(`  ${green}+${reset} base-framework/hooks/ (${hookFiles.length} hooks for scaffold)`);
 
@@ -486,6 +485,7 @@ function installWorkspace() {
   }
 
   // Copy operator.json template (don't overwrite existing)
+  // src/templates/ is retained as the npx-mode template source (no ${CLAUDE_PLUGIN_ROOT} in JSON)
   const operatorJsonDest = path.join(baseDir, 'operator.json');
   if (!fs.existsSync(operatorJsonDest)) {
     const operatorSrc = path.join(src, 'src', 'templates', 'operator.json');
@@ -508,17 +508,22 @@ function installWorkspace() {
     console.log(`  ${green}+${reset} .base/schemas/ (${schemaFiles.length} validation schemas)`);
   }
 
-  // Copy base-mcp
-  const baseMcpSrc = path.join(src, 'src', 'packages', 'base-mcp');
+  // Copy mcp/ (root tree) to .base/base-mcp/ — dest name 'base-mcp' is required
+  // for the vendored-location resolver in mcp/index.js (checks basename==='base-mcp').
+  const baseMcpSrc = path.join(src, 'mcp');
   const baseMcpDest = path.join(baseDir, 'base-mcp');
-  copyDir(baseMcpSrc, baseMcpDest);
+  copyDir(baseMcpSrc, baseMcpDest, workspaceDir);
   console.log(`  ${green}+${reset} .base/base-mcp/`);
 
-  // Copy all hooks to .base/hooks/
-  const allHooksSrc = path.join(src, 'src', 'hooks');
+  // Copy all hooks to .base/hooks/ from root hooks/ tree, expanding ${CLAUDE_PLUGIN_ROOT}
+  const allHooksSrc = path.join(src, 'hooks');
   const hookEntries = fs.readdirSync(allHooksSrc).filter(f => f.endsWith('.py'));
   for (const file of hookEntries) {
-    fs.copyFileSync(path.join(allHooksSrc, file), path.join(baseDir, 'hooks', file));
+    copyFileExpandingMacro(
+      path.join(allHooksSrc, file),
+      path.join(baseDir, 'hooks', file),
+      workspaceDir
+    );
   }
   console.log(`  ${green}+${reset} .base/hooks/ (${hookEntries.length} hooks)`);
 
