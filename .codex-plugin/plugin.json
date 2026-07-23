@@ -6,7 +6,7 @@
     "name": "Chris Kahler"
   },
   "license": "MIT",
-  "homepage": "https://github.com/ChristopherKahler/base#readme",
+  "homepage": "https://github.com/ChristopherKahler/base-v1#readme",
   "skills": "./skills/",
   "hooks": "./hooks/hooks.json",
   "mcpServers": {

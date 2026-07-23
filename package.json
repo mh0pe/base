@@ -30,12 +30,12 @@
   "license": "MIT",
   "repository": {
     "type": "git",
-    "url": "git+https://github.com/ChristopherKahler/base.git"
+    "url": "git+https://github.com/ChristopherKahler/base-v1.git"
   },
   "bugs": {
-    "url": "https://github.com/ChristopherKahler/base/issues"
+    "url": "https://github.com/ChristopherKahler/base-v1/issues"
   },
-  "homepage": "https://github.com/ChristopherKahler/base#readme",
+  "homepage": "https://github.com/ChristopherKahler/base-v1#readme",
   "engines": {
     "node": ">=16.7.0"
   }
