@@ -13,6 +13,26 @@ jobs:
       - uses: actions/setup-node@v4
         with:
           node-version: '22'
+      - name: Validate Codex MCP registration and handshake
+        run: |
+          npm install --prefix mcp --no-package-lock --ignore-scripts --no-audit --no-fund
+          node --test tests/codex-plugin.test.mjs
+      - name: Install Codex CLI
+        run: npm install -g @openai/codex
+      - name: Install smoke test (Codex resolves the plugin MCP)
+        env:
+          CODEX_HOME: ${{ runner.temp }}/codex-home
+        run: |
+          set -euo pipefail
+          codex plugin marketplace add . --json
+          codex plugin add base@base --json
+          codex mcp list --json | jq -e '
+            any(.[];
+              .name == "base-mcp"
+              and .transport.args == ["mcp/codex-launch.js"]
+              and (.transport.cwd | endswith("/."))
+            )
+          '
       - name: Install Claude Code CLI
         run: npm install -g @anthropic-ai/claude-code
       - name: Validate plugin + marketplace manifest (strict)

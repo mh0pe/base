@@ -199,6 +199,17 @@ npx @chrisai/base --global
 | `--config-dir <path>` | Custom Claude config directory |
 | `--workspace-dir <path>` | Target a specific workspace path |
 
+### Codex plugin install
+
+This repository also ships a native Codex plugin manifest. Codex resolves the
+BASE MCP launcher relative to the installed plugin and preserves the project
+directory for BASE data operations.
+
+```bash
+codex plugin marketplace add ChristopherKahler/base-v1
+codex plugin add base@base
+```
+
 ### Upgrading from v2
 
 If you're upgrading from BASE v2.x, the installer detects old artifacts and offers to archive them before proceeding. Nothing is deleted — everything moves to `.base/_archive/upgrade-v3/` where you can recover it if needed.
