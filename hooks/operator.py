@@ -39,7 +39,10 @@ def main():
     north_star = data.get("north_star", {}).get("metric", "Not set")
     timeframe = data.get("north_star", {}).get("timeframe", "")
     deep_why = data.get("deep_why", {}).get("statement", "Not set")
-    values = [v.get("value", "") for v in data.get("key_values", {}).get("values", [])]
+    # values entries may be objects ({rank, value, meaning}) or bare strings —
+    # base_update_operator accepts any shape, so tolerate both.
+    raw_values = data.get("key_values", {}).get("values", [])
+    values = [v if isinstance(v, str) else v.get("value", "") for v in raw_values]
     vision = data.get("surface_vision", {}).get("summary", "Not set")
     pitch = data.get("elevator_pitch", {}).get("pitch", "Not set")
 
