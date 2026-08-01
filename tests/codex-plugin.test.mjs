@@ -81,7 +81,7 @@ test("skills-dir install preserves the committed hook runtime manifest", async (
     .flatMap((group) => group.hooks)
     .map((hook) => hook.command);
   assert.ok(commands.length > 0);
-  assert.ok(commands.every((command) => command.startsWith("python3 ")));
+  assert.ok(commands.every((command) => command.startsWith("python3 -I ")));
   await assert.rejects(access(path.join(target, "mcp", "node_modules")));
 });
 

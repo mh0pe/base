@@ -1,6 +1,7 @@
 import importlib.util
 import json
 import os
+import shlex
 import shutil
 import subprocess
 import sys
@@ -158,7 +159,7 @@ class DependencyDetectionTests(unittest.TestCase):
             environment["PATH"] = ""
             python_executable = shutil.which("python3.11") or sys.executable
             result = subprocess.run(
-                [python_executable, str(MODULE_PATH)],
+                [python_executable, "-I", str(MODULE_PATH)],
                 capture_output=True,
                 text=True,
                 timeout=10,
@@ -168,6 +169,97 @@ class DependencyDetectionTests(unittest.TestCase):
             self.assertEqual(result.returncode, 0, result.stderr)
             self.assertNotIn("Traceback", result.stderr)
             self.assertIn("npm not found", result.stderr)
+
+    def test_isolated_manifest_hooks_resolve_stdlib_dependencies(self):
+        with tempfile.TemporaryDirectory() as temporary_directory:
+            root = Path(temporary_directory)
+            plugin_root = root / "plugin"
+            shutil.copytree(REPOSITORY_ROOT / "hooks", plugin_root / "hooks")
+            workspace = root / "workspace"
+            workspace.mkdir()
+
+            manifest = json.loads(
+                (plugin_root / "hooks" / "hooks.json").read_text(encoding="utf-8")
+            )
+            commands = [
+                hook["command"]
+                for event_groups in manifest["hooks"].values()
+                for event_group in event_groups
+                for hook in event_group["hooks"]
+            ]
+            self.assertEqual(len(commands), 7)
+            self.assertEqual(len(set(commands)), 7)
+
+            environment = os.environ.copy()
+            environment["CLAUDE_PLUGIN_ROOT"] = str(plugin_root)
+            environment["CLAUDE_PLUGIN_DATA"] = str(root / "data")
+            environment["CLAUDE_PROJECT_DIR"] = str(workspace)
+            python_executable = shutil.which("python3.11") or sys.executable
+
+            for command in commands:
+                tokens = shlex.split(command)
+                self.assertEqual(tokens[:2], ["python3", "-I"])
+                hook_path = Path(
+                    tokens[2].replace("${CLAUDE_PLUGIN_ROOT}", str(plugin_root))
+                )
+                with self.subTest(hook=hook_path.name):
+                    result = subprocess.run(
+                        [python_executable, "-I", str(hook_path)],
+                        input="{}\n",
+                        capture_output=True,
+                        text=True,
+                        timeout=10,
+                        env=environment,
+                    )
+                    self.assertEqual(result.returncode, 0, result.stderr)
+                    self.assertNotIn("Traceback", result.stderr)
+
+    def test_isolation_blocks_linux_style_stdlib_shadowing(self):
+        with tempfile.TemporaryDirectory() as temporary_directory:
+            hooks_directory = Path(temporary_directory) / "hooks"
+            hooks_directory.mkdir()
+            (hooks_directory / "operator.py").write_text(
+                "raise RuntimeError('stdlib-shadow sentinel')\n",
+                encoding="utf-8",
+            )
+            probe = hooks_directory / "probe.py"
+            probe.write_text(
+                "import sys\n"
+                "sys.modules.pop('operator', None)\n"
+                "import operator\n"
+                "print('stdlib imports ok')\n",
+                encoding="utf-8",
+            )
+            python_executable = shutil.which("python3.11") or sys.executable
+
+            unsafe = subprocess.run(
+                [
+                    python_executable,
+                    "-X",
+                    "frozen_modules=off",
+                    str(probe),
+                ],
+                capture_output=True,
+                text=True,
+                timeout=10,
+            )
+            self.assertNotEqual(unsafe.returncode, 0)
+            self.assertIn("stdlib-shadow sentinel", unsafe.stderr)
+
+            isolated = subprocess.run(
+                [
+                    python_executable,
+                    "-I",
+                    "-X",
+                    "frozen_modules=off",
+                    str(probe),
+                ],
+                capture_output=True,
+                text=True,
+                timeout=10,
+            )
+            self.assertEqual(isolated.returncode, 0, isolated.stderr)
+            self.assertEqual(isolated.stdout.strip(), "stdlib imports ok")
 
     def test_incomplete_real_dependency_tree_is_replaced_by_plugin_data(self):
         with tempfile.TemporaryDirectory() as temporary_directory:
@@ -339,7 +431,7 @@ groom = false
             environment["CLAUDE_PROJECT_DIR"] = str(root)
             python_executable = shutil.which("python3.11") or sys.executable
             result = subprocess.run(
-                [python_executable, str(SATELLITE_MODULE_PATH)],
+                [python_executable, "-I", str(SATELLITE_MODULE_PATH)],
                 capture_output=True,
                 text=True,
                 timeout=10,

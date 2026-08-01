@@ -5,7 +5,7 @@
         "hooks": [
           {
             "type": "command",
-            "command": "python3 \"${CLAUDE_PLUGIN_ROOT}/hooks/psmm-injector.py\""
+            "command": "python3 -I \"${CLAUDE_PLUGIN_ROOT}/hooks/psmm-injector.py\""
           }
         ]
       },
@@ -13,7 +13,7 @@
         "hooks": [
           {
             "type": "command",
-            "command": "python3 \"${CLAUDE_PLUGIN_ROOT}/hooks/active-hook.py\""
+            "command": "python3 -I \"${CLAUDE_PLUGIN_ROOT}/hooks/active-hook.py\""
           }
         ]
       },
@@ -21,7 +21,7 @@
         "hooks": [
           {
             "type": "command",
-            "command": "python3 \"${CLAUDE_PLUGIN_ROOT}/hooks/backlog-hook.py\""
+            "command": "python3 -I \"${CLAUDE_PLUGIN_ROOT}/hooks/backlog-hook.py\""
           }
         ]
       },
@@ -29,7 +29,7 @@
         "hooks": [
           {
             "type": "command",
-            "command": "python3 \"${CLAUDE_PLUGIN_ROOT}/hooks/base-pulse-check.py\""
+            "command": "python3 -I \"${CLAUDE_PLUGIN_ROOT}/hooks/base-pulse-check.py\""
           }
         ]
       },
@@ -37,7 +37,7 @@
         "hooks": [
           {
             "type": "command",
-            "command": "python3 \"${CLAUDE_PLUGIN_ROOT}/hooks/operator.py\""
+            "command": "python3 -I \"${CLAUDE_PLUGIN_ROOT}/hooks/operator.py\""
           }
         ]
       }
@@ -47,7 +47,7 @@
         "hooks": [
           {
             "type": "command",
-            "command": "python3 \"${CLAUDE_PLUGIN_ROOT}/hooks/satellite-detection.py\""
+            "command": "python3 -I \"${CLAUDE_PLUGIN_ROOT}/hooks/satellite-detection.py\""
           }
         ]
       },
@@ -55,7 +55,7 @@
         "hooks": [
           {
             "type": "command",
-            "command": "python3 \"${CLAUDE_PLUGIN_ROOT}/hooks/install-mcp-deps.py\""
+            "command": "python3 -I \"${CLAUDE_PLUGIN_ROOT}/hooks/install-mcp-deps.py\""
           }
         ]
       }
