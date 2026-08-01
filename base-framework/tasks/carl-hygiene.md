@@ -112,8 +112,8 @@ For each domain that has decisions (from `carl_v2_get_domain`):
 <step name="log">
 Record the hygiene session.
 
-1. Update `.base/workspace.json` → `carl_hygiene.last_run` to today's date
-2. Update `.base/data/state.json` → note CARL hygiene completed with timestamp
+1. Call `base_record_carl_hygiene` with a concise summary of proposals, rules, and decisions reviewed
+2. Confirm the tool recorded today's date in both `workspace.json` and `state.json`
 3. Report:
    ```
    CARL Hygiene Complete

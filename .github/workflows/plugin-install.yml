@@ -13,10 +13,15 @@ jobs:
       - uses: actions/setup-node@v4
         with:
           node-version: '22'
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
       - name: Validate Codex MCP registration and handshake
         run: |
-          npm install --prefix mcp --no-package-lock --ignore-scripts --no-audit --no-fund
+          npm ci --prefix mcp --ignore-scripts --no-audit --no-fund
           node --test tests/codex-plugin.test.mjs
+          node --test tests/satellite-state.test.mjs
+          python -m unittest tests/test_install_mcp_deps.py
       - name: Install Codex CLI
         run: npm install -g @openai/codex
       - name: Install smoke test (Codex resolves the plugin MCP)
@@ -24,6 +29,7 @@ jobs:
           CODEX_HOME: ${{ runner.temp }}/codex-home
         run: |
           set -euo pipefail
+          mkdir -p "$CODEX_HOME"
           codex plugin marketplace add . --json
           codex plugin add base@base --json
           codex mcp list --json | jq -e '

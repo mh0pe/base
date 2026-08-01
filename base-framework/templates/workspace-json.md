@@ -90,7 +90,7 @@ Output file: `.base/workspace.json`
 | satellites.*.engine | enum | What orchestration tool manages this project |
 | satellites.*.state | string | Path to the project's state file for health checks |
 | satellites.*.groom_check | boolean | Whether BASE checks this project's health during groom (default: true) |
-| satellites.*.last_activity | string | ISO timestamp of last project activity (synced from paul.json) |
-| satellites.*.phase_name | string | Current phase name (synced from paul.json) |
+| satellites.*.last_activity | string | ISO timestamp of last project activity (synced from paul.toml or legacy paul.json) |
+| satellites.*.phase_name | string | Current phase name (synced from the PAUL state manifest) |
 | satellites.*.loop_position | string | PAUL loop state: IDLE, PLAN, APPLY, UNIFY |
 | satellites.*.handoff | boolean | Whether a handoff file exists for this project |

@@ -59,7 +59,10 @@ def main():
             paul_projects.append({
                 "id": item["id"],
                 "title": item["title"][:35],
-                "phase": f"{paul.get('completed_phases', '?')}/{paul.get('total_phases', '?')}",
+                "phase": (
+                    f"{paul.get('completed_phases') if paul.get('completed_phases') is not None else '?'}"
+                    f"/{paul.get('total_phases') if paul.get('total_phases') is not None else '?'}"
+                ),
                 "loop": paul.get("loop_position", "?"),
                 "last_plan_age": lp_age,
                 "handoff": paul.get("handoff", False),

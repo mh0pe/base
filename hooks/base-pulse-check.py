@@ -13,6 +13,7 @@ Legacy base-pulse-check.py reads STATE.md + workspace.json (unchanged).
 
 import sys
 import json
+import tomllib
 from datetime import datetime, date
 from pathlib import Path
 
@@ -99,20 +100,37 @@ def recalculate_drift(state):
         except (json.JSONDecodeError, OSError):
             pass
 
-    # Stale satellites: check paul.json timestamps
+    # Stale satellites: prefer paul.toml and fall back to legacy paul.json.
     satellites = state.get("satellites", {})
     stale_sats = 0
     for name, sat in satellites.items():
-        sat_path = WORKSPACE_ROOT / sat.get("path", "") / ".paul" / "paul.json"
-        if sat_path.exists():
+        paul_dir = WORKSPACE_ROOT / sat.get("path", "") / ".paul"
+        paul_toml = paul_dir / "paul.toml"
+        paul_json = paul_dir / "paul.json"
+        paul_state = paul_toml if paul_toml.exists() else paul_json
+        if paul_state.exists():
             try:
-                paul = json.loads(sat_path.read_text())
-                ts = paul.get("timestamps", {}).get("updated_at")
+                if paul_state.suffix == ".toml":
+                    with open(paul_state, "rb") as handle:
+                        paul = tomllib.load(handle)
+                    ts = paul.get("stats", {}).get("last_activity")
+                else:
+                    paul = json.loads(paul_state.read_text())
+                    ts = paul.get("timestamps", {}).get("updated_at")
                 if ts:
+                    if hasattr(ts, "isoformat"):
+                        ts = ts.isoformat()
                     updated_date = datetime.fromisoformat(ts).date()
                     if (now - updated_date).days > 14:
                         stale_sats += 1
-            except (json.JSONDecodeError, OSError, ValueError):
+            except (
+                json.JSONDecodeError,
+                tomllib.TOMLDecodeError,
+                OSError,
+                ValueError,
+                TypeError,
+                AttributeError,
+            ):
                 pass
     indicators["stale_satellites"] = stale_sats
 

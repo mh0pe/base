@@ -4,7 +4,11 @@
   "description": "BASE Surface CRUD Server - Generic operations for registered data surfaces",
   "type": "module",
   "main": "index.js",
+  "engines": {
+    "node": ">=20"
+  },
   "dependencies": {
+    "@iarna/toml": "^2.2.5",
     "@modelcontextprotocol/sdk": "^1.0.0"
   }
 }

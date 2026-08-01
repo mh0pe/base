@@ -188,6 +188,7 @@ function copyDir(srcDir, destDir, pluginRoot) {
   fs.mkdirSync(destDir, { recursive: true });
   const entries = fs.readdirSync(srcDir, { withFileTypes: true });
   for (const entry of entries) {
+    if (entry.name === 'node_modules') continue;
     const srcPath = path.join(srcDir, entry.name);
     const destPath = path.join(destDir, entry.name);
     if (entry.isDirectory()) {
@@ -677,31 +678,10 @@ function installSkillsDir() {
   }
   console.log(`  ${green}+${reset} hooks/ (${hookFiles.length} hook scripts + install-mcp-deps.py)`);
 
-  // Write hooks.json — wires base's hooks using ${CLAUDE_PLUGIN_ROOT} paths
-  const hooksJson = {
-    hooks: {
-      UserPromptSubmit: [
-        {
-          hooks: [
-            { type: 'command', command: 'python3 ${CLAUDE_PLUGIN_ROOT}/hooks/active-hook.py' },
-            { type: 'command', command: 'python3 ${CLAUDE_PLUGIN_ROOT}/hooks/backlog-hook.py' },
-            { type: 'command', command: 'python3 ${CLAUDE_PLUGIN_ROOT}/hooks/base-pulse-check.py' },
-            { type: 'command', command: 'python3 ${CLAUDE_PLUGIN_ROOT}/hooks/psmm-injector.py' },
-            { type: 'command', command: 'python3 ${CLAUDE_PLUGIN_ROOT}/hooks/operator.py' }
-          ]
-        }
-      ],
-      SessionStart: [
-        {
-          hooks: [
-            { type: 'command', command: 'python3 ${CLAUDE_PLUGIN_ROOT}/hooks/satellite-detection.py' },
-            { type: 'command', command: 'python3 ${CLAUDE_PLUGIN_ROOT}/hooks/install-mcp-deps.py' }
-          ]
-        }
-      ]
-    }
-  };
-  fs.writeFileSync(path.join(hooksDir, 'hooks.json'), JSON.stringify(hooksJson, null, 2));
+  // Keep the committed hook manifest as the single source of truth. Rebuilding
+  // it here previously drifted to generic python3 commands even though the
+  // TOML-aware hooks require Python 3.11's stdlib tomllib.
+  fs.copyFileSync(path.join(hooksSrcDir, 'hooks.json'), path.join(hooksDir, 'hooks.json'));
   console.log(`  ${green}+${reset} hooks/hooks.json (UserPromptSubmit x5 + SessionStart x2: satellite-detection + install-mcp-deps)`);
 
   // Copy MCP source into mcp/ (flat layout — index.js at mcp/index.js)

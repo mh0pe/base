@@ -120,8 +120,10 @@ def main():
             if paul_info and paul_info.get("is_paul_project") and paul_info.get("phase"):
                 paul_parts = []
                 p_phase = paul_info.get("phase", "?")
-                p_completed = paul_info.get("completed_phases", "?")
-                p_total = paul_info.get("total_phases", "?")
+                p_completed = paul_info.get("completed_phases")
+                p_total = paul_info.get("total_phases")
+                p_completed = "?" if p_completed is None else p_completed
+                p_total = "?" if p_total is None else p_total
                 p_loop = paul_info.get("loop_position", "?")
                 paul_parts.append(f"Phase {p_completed}/{p_total} ({p_phase})")
                 paul_parts.append(str(p_loop))

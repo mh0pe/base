@@ -47,9 +47,9 @@ When assigned, update via base_update_project(id, {parent_id: "INI-XXX"}).
 </step>
 
 <step name="sync_paul_data">
-For each project that has a PAUL satellite (paul.json exists in its location):
+For each project that has a PAUL satellite (paul.toml or legacy paul.json exists in its location):
 
-1. Read the paul.json file from the project's location
+1. Read the PAUL state manifest from the project's location (prefer paul.toml)
 2. Update the project's paul field with current: satellite_name, location, milestone, phase, loop_position, handoff status and path
 3. Update via base_update_project
 
@@ -92,12 +92,12 @@ This phase is complete. Parent workflow resumes.
 </steps>
 
 <output>
-All projects mapped to initiatives via Apex MCP. PAUL satellite data synced from paul.json files.
+All projects mapped to initiatives via Apex MCP. PAUL satellite data synced from source state manifests.
 </output>
 
 <acceptance-criteria>
 - [ ] Every project reviewed — assigned to initiative, left unparented, or archived
 - [ ] Parent IDs set via base_update_project MCP
-- [ ] PAUL satellites synced from source paul.json files
+- [ ] PAUL satellites synced from source PAUL state manifests
 - [ ] Final mapping displayed and approved by operator
 </acceptance-criteria>
