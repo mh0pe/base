@@ -40,6 +40,18 @@ test("package manifests advertise the installed MCP runtime floor", async () => 
   assert.equal(mcpPackage.engines.node, ">=20");
 });
 
+test("Codex install smoke creates its configured home before CLI use", async () => {
+  const workflow = await readFile(
+    path.join(repositoryRoot, ".github", "workflows", "plugin-install.yml"),
+    "utf8",
+  );
+  const homeCreation = workflow.indexOf('mkdir -p "$CODEX_HOME"');
+  const firstCodexCommand = workflow.indexOf("codex plugin marketplace add . --json");
+
+  assert.ok(homeCreation >= 0);
+  assert.ok(firstCodexCommand > homeCreation);
+});
+
 test("npm package excludes local dependency and bytecode artifacts", async () => {
   const { stdout } = await execFileAsync(
     "npm",

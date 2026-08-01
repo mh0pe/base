@@ -29,6 +29,7 @@ jobs:
           CODEX_HOME: ${{ runner.temp }}/codex-home
         run: |
           set -euo pipefail
+          mkdir -p "$CODEX_HOME"
           codex plugin marketplace add . --json
           codex plugin add base@base --json
           codex mcp list --json | jq -e '
