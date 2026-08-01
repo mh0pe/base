@@ -662,8 +662,8 @@ claude
 
 ## Requirements
 
-- **Node.js** >= 16.7.0
-- **Python 3** (for hooks)
+- **Node.js** >= 20 (required by the MCP dependency tree)
+- **Python** >= 3.11 (for hooks; uses the standard-library `tomllib` module)
 - **[Claude Code](https://claude.ai/code)**
 
 ---

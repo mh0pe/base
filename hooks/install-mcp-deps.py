@@ -6,7 +6,8 @@ Idempotent: exits 0 immediately if every declared MCP dependency is present.
 Fail-open: warns to stderr and exits 0 on any error so the session always starts.
 
 Strategy:
-  1. npm install --omit=dev --prefix "$CLAUDE_PLUGIN_DATA"
+  1. npm ci --omit=dev --prefix "$CLAUDE_PLUGIN_DATA" when the release ships
+     a lockfile; otherwise fall back to npm install.
      -> places node_modules at $CLAUDE_PLUGIN_DATA/node_modules/
   2. symlink $CLAUDE_PLUGIN_ROOT/mcp/node_modules
              -> $CLAUDE_PLUGIN_DATA/node_modules
@@ -24,6 +25,14 @@ import subprocess
 import json
 
 
+MCP_RUNTIME_IMPORTS = (
+    "@iarna/toml",
+    "@modelcontextprotocol/sdk/server/index.js",
+    "@modelcontextprotocol/sdk/server/stdio.js",
+    "@modelcontextprotocol/sdk/types.js",
+)
+
+
 def warn(msg):
     print(f"[install-mcp-deps] WARNING: {msg}", file=sys.stderr)
 
@@ -32,15 +41,78 @@ def dependencies_installed(package_json_path, plugin_data):
     """Return True only when every dependency declared by the MCP is installed."""
     try:
         with open(package_json_path, encoding="utf-8") as handle:
-            dependencies = json.load(handle).get("dependencies", {})
-    except (OSError, json.JSONDecodeError):
+            package_manifest = json.load(handle)
+        if not isinstance(package_manifest, dict):
+            return False
+        dependencies = package_manifest.get("dependencies", {})
+        if not isinstance(dependencies, dict):
+            return False
+    except (OSError, json.JSONDecodeError, TypeError):
         return False
 
+    expected_versions = {}
+    lockfile_path = os.path.join(os.path.dirname(package_json_path), "package-lock.json")
+    if os.path.isfile(lockfile_path):
+        try:
+            with open(lockfile_path, encoding="utf-8") as handle:
+                lockfile = json.load(handle)
+            locked_packages = lockfile.get("packages", {})
+            if not isinstance(locked_packages, dict):
+                return False
+            for name in dependencies:
+                locked_package = locked_packages.get(f"node_modules/{name}", {})
+                locked_version = locked_package.get("version")
+                if not isinstance(locked_version, str) or not locked_version:
+                    return False
+                expected_versions[name] = locked_version
+        except (OSError, json.JSONDecodeError, TypeError, AttributeError):
+            return False
+
     node_modules = os.path.join(plugin_data, "node_modules")
-    return all(
-        os.path.isdir(os.path.join(node_modules, *name.split("/")))
-        for name in dependencies
+    for name in dependencies:
+        if not isinstance(name, str) or not name:
+            return False
+        installed_manifest = os.path.join(
+            node_modules, *name.split("/"), "package.json"
+        )
+        try:
+            with open(installed_manifest, encoding="utf-8") as handle:
+                installed_package = json.load(handle)
+            if (
+                not isinstance(installed_package, dict)
+                or installed_package.get("name") != name
+                or not isinstance(installed_package.get("version"), str)
+                or not installed_package["version"]
+                or (
+                    name in expected_versions
+                    and installed_package["version"] != expected_versions[name]
+                )
+            ):
+                return False
+        except (OSError, json.JSONDecodeError, TypeError):
+            return False
+
+    # Package metadata alone can survive a truncated install. Resolve and load
+    # the exact bare imports used by the MCP so missing files or transitives
+    # (for example zod behind the SDK) trigger a repair install.
+    node = shutil.which("node")
+    if not node:
+        return False
+    probe = "\n".join(
+        f"await import({json.dumps(specifier)});"
+        for specifier in MCP_RUNTIME_IMPORTS
     )
+    try:
+        result = subprocess.run(
+            [node, "--input-type=module", "--eval", probe],
+            cwd=plugin_data,
+            capture_output=True,
+            text=True,
+            timeout=10,
+        )
+    except (OSError, subprocess.SubprocessError):
+        return False
+    return result.returncode == 0
 
 
 def main():
@@ -69,7 +141,7 @@ def main():
     # SDK marker left upgraded plugin data missing newer runtime packages.
     if dependencies_installed(src_pkg, plugin_data):
         # Re-assert symlink so it survives if the plugin dir was refreshed
-        _assert_symlink(mcp_nm, plugin_data)
+        _assert_symlink(mcp_nm, plugin_data, src_pkg)
         sys.exit(0)
 
     try:
@@ -77,7 +149,8 @@ def main():
         shutil.copy2(src_pkg, os.path.join(plugin_data, "package.json"))
 
         lockfile = os.path.join(mcp_dir, "package-lock.json")
-        if os.path.isfile(lockfile):
+        has_lockfile = os.path.isfile(lockfile)
+        if has_lockfile:
             shutil.copy2(lockfile, os.path.join(plugin_data, "package-lock.json"))
 
         npm = shutil.which("npm")
@@ -85,17 +158,30 @@ def main():
             warn("npm not found in PATH; skipping MCP deps install.")
             sys.exit(0)
 
+        install_mode = "ci" if has_lockfile else "install"
         result = subprocess.run(
-            [npm, "install", "--omit=dev", "--prefix", plugin_data],
+            [
+                npm,
+                install_mode,
+                "--omit=dev",
+                "--prefix",
+                plugin_data,
+                "--ignore-scripts",
+                "--no-audit",
+                "--no-fund",
+            ],
             capture_output=True,
             text=True,
             timeout=120,
         )
         if result.returncode != 0:
-            warn(f"npm install failed (exit {result.returncode}): {result.stderr.strip()}")
+            warn(
+                f"npm {install_mode} failed (exit {result.returncode}): "
+                f"{result.stderr.strip()}"
+            )
             sys.exit(0)
 
-        _assert_symlink(mcp_nm, plugin_data)
+        _assert_symlink(mcp_nm, plugin_data, src_pkg)
         print(f"[install-mcp-deps] MCP deps installed to {plugin_data}", file=sys.stderr)
 
     except Exception as exc:
@@ -103,7 +189,7 @@ def main():
         sys.exit(0)
 
 
-def _assert_symlink(link_path, plugin_data):
+def _assert_symlink(link_path, plugin_data, package_json_path=None):
     """Create or update the node_modules symlink inside the MCP dir."""
     target = os.path.join(plugin_data, "node_modules")
     try:
@@ -113,9 +199,15 @@ def _assert_symlink(link_path, plugin_data):
                 return  # already correct
             os.unlink(link_path)
         elif os.path.isdir(link_path):
-            # A real node_modules exists (e.g. from a previous local install);
-            # leave it alone so we don't break a working setup.
-            return
+            # Preserve a complete local development install. Replace only an
+            # incomplete managed dependency tree, which would otherwise take
+            # precedence over the freshly installed plugin-data packages.
+            mcp_dir = os.path.dirname(link_path)
+            if package_json_path and dependencies_installed(
+                package_json_path, mcp_dir
+            ):
+                return
+            shutil.rmtree(link_path)
         os.symlink(target, link_path)
     except Exception as exc:
         print(

@@ -7,6 +7,8 @@ import sys
 import tempfile
 import unittest
 from pathlib import Path
+from types import SimpleNamespace
+from unittest import mock
 
 
 REPOSITORY_ROOT = Path(__file__).resolve().parents[1]
@@ -42,6 +44,17 @@ class DependencyDetectionTests(unittest.TestCase):
                     "@iarna/toml": "^2.2.5",
                 },
             }), encoding="utf-8")
+            (root / "package-lock.json").write_text(
+                json.dumps({
+                    "packages": {
+                        "node_modules/@modelcontextprotocol/sdk": {
+                            "version": "1.30.0"
+                        },
+                        "node_modules/@iarna/toml": {"version": "2.2.5"},
+                    }
+                }),
+                encoding="utf-8",
+            )
 
             (root / "node_modules" / "@modelcontextprotocol" / "sdk").mkdir(parents=True)
             self.assertFalse(
@@ -49,6 +62,73 @@ class DependencyDetectionTests(unittest.TestCase):
             )
 
             (root / "node_modules" / "@iarna" / "toml").mkdir(parents=True)
+            self.assertFalse(
+                INSTALL_MCP_DEPS.dependencies_installed(package_path, root)
+            )
+
+            for dependency in (
+                root / "node_modules" / "@modelcontextprotocol" / "sdk",
+                root / "node_modules" / "@iarna" / "toml",
+            ):
+                (dependency / "package.json").write_text(
+                    json.dumps({}), encoding="utf-8"
+                )
+            self.assertFalse(
+                INSTALL_MCP_DEPS.dependencies_installed(package_path, root)
+            )
+
+            dependency_manifests = {
+                root / "node_modules" / "@modelcontextprotocol" / "sdk": {
+                    "name": "@modelcontextprotocol/sdk",
+                    "version": "1.30.0",
+                    "type": "module",
+                },
+                root / "node_modules" / "@iarna" / "toml": {
+                    "name": "@iarna/toml",
+                    "version": "2.2.5",
+                    "main": "index.js",
+                },
+            }
+            for dependency, manifest in dependency_manifests.items():
+                (dependency / "package.json").write_text(
+                    json.dumps(manifest), encoding="utf-8"
+                )
+            (root / "node_modules" / "@iarna" / "toml" / "package.json").write_text(
+                json.dumps({"name": "@iarna/toml", "version": "2.2.4"}),
+                encoding="utf-8",
+            )
+            self.assertFalse(
+                INSTALL_MCP_DEPS.dependencies_installed(package_path, root)
+            )
+            (root / "node_modules" / "@iarna" / "toml" / "package.json").write_text(
+                json.dumps(dependency_manifests[
+                    root / "node_modules" / "@iarna" / "toml"
+                ]),
+                encoding="utf-8",
+            )
+            sdk = root / "node_modules" / "@modelcontextprotocol" / "sdk"
+            (sdk / "server").mkdir()
+            (sdk / "server" / "index.js").write_text("export {};\n", encoding="utf-8")
+            (sdk / "server" / "stdio.js").write_text("export {};\n", encoding="utf-8")
+            (sdk / "types.js").write_text("import 'zod';\n", encoding="utf-8")
+            (root / "node_modules" / "@iarna" / "toml" / "index.js").write_text(
+                "module.exports = {};\n", encoding="utf-8"
+            )
+            self.assertFalse(
+                INSTALL_MCP_DEPS.dependencies_installed(package_path, root)
+            )
+            zod = root / "node_modules" / "zod"
+            zod.mkdir()
+            (zod / "package.json").write_text(
+                json.dumps({
+                    "name": "zod",
+                    "version": "1.0.0",
+                    "type": "module",
+                    "main": "index.js",
+                }),
+                encoding="utf-8",
+            )
+            (zod / "index.js").write_text("export {};\n", encoding="utf-8")
             self.assertTrue(
                 INSTALL_MCP_DEPS.dependencies_installed(package_path, root)
             )
@@ -60,6 +140,115 @@ class DependencyDetectionTests(unittest.TestCase):
             package_path.write_text("not-json", encoding="utf-8")
             self.assertFalse(
                 INSTALL_MCP_DEPS.dependencies_installed(package_path, root)
+            )
+
+    def test_non_object_package_manifest_is_fail_open_at_entrypoint(self):
+        with tempfile.TemporaryDirectory() as temporary_directory:
+            root = Path(temporary_directory)
+            plugin_root = root / "plugin"
+            plugin_data = root / "data"
+            (plugin_root / "mcp").mkdir(parents=True)
+            (plugin_root / "mcp" / "package.json").write_text(
+                "[]", encoding="utf-8"
+            )
+
+            environment = os.environ.copy()
+            environment["CLAUDE_PLUGIN_ROOT"] = str(plugin_root)
+            environment["CLAUDE_PLUGIN_DATA"] = str(plugin_data)
+            environment["PATH"] = ""
+            python_executable = shutil.which("python3.11") or sys.executable
+            result = subprocess.run(
+                [python_executable, str(MODULE_PATH)],
+                capture_output=True,
+                text=True,
+                timeout=10,
+                env=environment,
+            )
+
+            self.assertEqual(result.returncode, 0, result.stderr)
+            self.assertNotIn("Traceback", result.stderr)
+            self.assertIn("npm not found", result.stderr)
+
+    def test_incomplete_real_dependency_tree_is_replaced_by_plugin_data(self):
+        with tempfile.TemporaryDirectory() as temporary_directory:
+            root = Path(temporary_directory)
+            mcp_directory = root / "plugin" / "mcp"
+            plugin_data = root / "data"
+            package_path = mcp_directory / "package.json"
+            package_path.parent.mkdir(parents=True)
+            package_path.write_text(
+                json.dumps({"dependencies": {"example": "1.0.0"}}),
+                encoding="utf-8",
+            )
+            (mcp_directory / "node_modules").mkdir()
+            installed_dependency = plugin_data / "node_modules" / "example"
+            installed_dependency.mkdir(parents=True)
+            (installed_dependency / "package.json").write_text(
+                json.dumps({"name": "example", "version": "1.0.0"}),
+                encoding="utf-8",
+            )
+
+            INSTALL_MCP_DEPS._assert_symlink(
+                mcp_directory / "node_modules", plugin_data, package_path
+            )
+
+            self.assertTrue((mcp_directory / "node_modules").is_symlink())
+            self.assertEqual(
+                (mcp_directory / "node_modules").resolve(),
+                (plugin_data / "node_modules").resolve(),
+            )
+
+    def test_locked_bootstrap_uses_clean_install_for_repair(self):
+        with tempfile.TemporaryDirectory() as temporary_directory:
+            root = Path(temporary_directory)
+            plugin_root = root / "plugin"
+            plugin_data = root / "data"
+            mcp_directory = plugin_root / "mcp"
+            mcp_directory.mkdir(parents=True)
+            (mcp_directory / "package.json").write_text(
+                json.dumps({"dependencies": {"example": "1.0.0"}}),
+                encoding="utf-8",
+            )
+            (mcp_directory / "package-lock.json").write_text(
+                json.dumps({
+                    "lockfileVersion": 3,
+                    "packages": {
+                        "": {"dependencies": {"example": "1.0.0"}},
+                        "node_modules/example": {"version": "1.0.0"},
+                    },
+                }),
+                encoding="utf-8",
+            )
+
+            with (
+                mock.patch.dict(os.environ, {
+                    "CLAUDE_PLUGIN_ROOT": str(plugin_root),
+                    "CLAUDE_PLUGIN_DATA": str(plugin_data),
+                }),
+                mock.patch.object(
+                    INSTALL_MCP_DEPS, "dependencies_installed", return_value=False
+                ),
+                mock.patch.object(shutil, "which", return_value="/fake/npm"),
+                mock.patch.object(
+                    subprocess,
+                    "run",
+                    return_value=SimpleNamespace(returncode=0, stderr=""),
+                ) as run,
+            ):
+                INSTALL_MCP_DEPS.main()
+
+            self.assertEqual(
+                run.call_args.args[0],
+                [
+                    "/fake/npm",
+                    "ci",
+                    "--omit=dev",
+                    "--prefix",
+                    str(plugin_data),
+                    "--ignore-scripts",
+                    "--no-audit",
+                    "--no-fund",
+                ],
             )
 
 

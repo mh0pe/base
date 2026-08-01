@@ -10,8 +10,12 @@
     "commands",
     "skills",
     "base-framework",
-    "mcp",
-    "hooks",
+    "mcp/*.js",
+    "mcp/package.json",
+    "mcp/package-lock.json",
+    "mcp/tools/*.js",
+    "hooks/*.py",
+    "hooks/hooks.json",
     "src/templates",
     "schemas",
     "README.md"
@@ -37,6 +41,6 @@
   },
   "homepage": "https://github.com/ChristopherKahler/base-v1#readme",
   "engines": {
-    "node": ">=16.7.0"
+    "node": ">=20"
   }
 }

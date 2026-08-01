@@ -1,10 +1,13 @@
 import assert from "node:assert/strict";
-import { spawn } from "node:child_process";
-import { mkdtemp, readFile, rm } from "node:fs/promises";
+import { execFile, spawn } from "node:child_process";
+import { access, mkdtemp, readFile, rm } from "node:fs/promises";
 import os from "node:os";
 import path from "node:path";
 import test from "node:test";
 import { fileURLToPath } from "node:url";
+import { promisify } from "node:util";
+
+const execFileAsync = promisify(execFile);
 
 const repositoryRoot = path.resolve(
   path.dirname(fileURLToPath(import.meta.url)),
@@ -24,6 +27,62 @@ test("Codex manifest uses a plugin-relative MCP launch", async () => {
   assert.equal(server.cwd, ".");
   assert.deepEqual(server.env_vars, ["CLAUDE_PROJECT_DIR", "PWD"]);
   assert.doesNotMatch(JSON.stringify(server), /\$\{CLAUDE_PLUGIN_ROOT\}/);
+});
+
+test("package manifests advertise the installed MCP runtime floor", async () => {
+  const rootPackage = JSON.parse(
+    await readFile(path.join(repositoryRoot, "package.json"), "utf8"),
+  );
+  const mcpPackage = JSON.parse(
+    await readFile(path.join(repositoryRoot, "mcp", "package.json"), "utf8"),
+  );
+  assert.equal(rootPackage.engines.node, ">=20");
+  assert.equal(mcpPackage.engines.node, ">=20");
+});
+
+test("npm package excludes local dependency and bytecode artifacts", async () => {
+  const { stdout } = await execFileAsync(
+    "npm",
+    ["pack", "--dry-run", "--json"],
+    { cwd: repositoryRoot },
+  );
+  const [packed] = JSON.parse(stdout);
+  const files = packed.files.map((entry) => entry.path);
+
+  assert.equal(files.some((file) => file.includes("node_modules")), false);
+  assert.equal(files.some((file) => file.includes("__pycache__")), false);
+  assert.equal(files.some((file) => file.endsWith(".pyc")), false);
+  assert.ok(files.includes("mcp/package-lock.json"));
+  assert.ok(files.includes("mcp/tools/satellite.js"));
+  assert.ok(files.includes("hooks/install-mcp-deps.py"));
+});
+
+test("skills-dir install preserves the committed hook runtime manifest", async (t) => {
+  const temporaryRoot = await mkdtemp(path.join(os.tmpdir(), "base-skills-install-"));
+  const target = path.join(temporaryRoot, "base");
+  t.after(() => rm(temporaryRoot, { recursive: true, force: true }));
+
+  await execFileAsync(process.execPath, [
+    path.join(repositoryRoot, "bin", "install.js"),
+    "--skills-dir",
+    "--dir",
+    target,
+  ]);
+
+  const sourceHooks = JSON.parse(
+    await readFile(path.join(repositoryRoot, "hooks", "hooks.json"), "utf8"),
+  );
+  const installedHooks = JSON.parse(
+    await readFile(path.join(target, "hooks", "hooks.json"), "utf8"),
+  );
+  assert.deepEqual(installedHooks, sourceHooks);
+  const commands = Object.values(installedHooks.hooks)
+    .flat()
+    .flatMap((group) => group.hooks)
+    .map((hook) => hook.command);
+  assert.ok(commands.length > 0);
+  assert.ok(commands.every((command) => command.startsWith("python3 ")));
+  await assert.rejects(access(path.join(target, "mcp", "node_modules")));
 });
 
 test("Codex launcher initializes BASE and exposes all tools", async (t) => {
