@@ -1,22 +1,23 @@
 #!/usr/bin/env python3
 """
 Hook: satellite-detection.py
-Purpose: Scans the workspace recursively for .paul/paul.json files,
-         auto-registers new satellites, and syncs paul.json state to
-         workspace.json and projects.json.
+Purpose: Scans the workspace recursively for PAUL state manifests,
+         auto-registers new satellites, and syncs paul.toml (preferred) or
+         legacy paul.json state to workspace.json and projects.json.
 Triggers: SessionStart — runs once when Claude Code starts a session.
 Output: <base-satellites> block if new satellites registered, silent otherwise.
 
-Sync flow (paul.json → workspace.json → projects.json):
-  1. Discover paul.json files across workspace
+Sync flow (PAUL state → workspace.json → projects.json):
+  1. Discover paul.toml or legacy paul.json files across workspace
   2. Register new satellites (existing behavior)
-  3. Sync paul.json state to workspace.json satellite entries
+  3. Sync PAUL state to workspace.json satellite entries
   4. Cross-check projects.json: update paul field on matching projects
   Respects satellite.sync: false as opt-out for steps 3-4.
 """
 
 import sys
 import json
+import tomllib
 from datetime import datetime
 from pathlib import Path
 
@@ -48,19 +49,50 @@ def has_hidden_component(path: Path, workspace_root: Path) -> bool:
     return any(part.startswith(".") and part != ".paul" for part in rel.parts)
 
 
-def find_paul_json_files(workspace_root: Path) -> list[Path]:
+def find_paul_state_files(workspace_root: Path) -> list[Path]:
     """
-    Recursively scan workspace_root for .paul/paul.json files.
+    Recursively scan workspace_root for PAUL state manifests.
+    Prefer paul.toml when both formats exist in the same project.
     Skips any path that has a hidden directory component (starts with '.').
     """
     results = []
     try:
-        for paul_json in workspace_root.rglob(".paul/paul.json"):
-            if not has_hidden_component(paul_json, workspace_root):
-                results.append(paul_json)
+        for paul_dir in workspace_root.rglob(".paul"):
+            if not paul_dir.is_dir():
+                continue
+            paul_toml = paul_dir / "paul.toml"
+            paul_json = paul_dir / "paul.json"
+            paul_state = paul_toml if paul_toml.is_file() else paul_json
+            if paul_state.is_file() and not has_hidden_component(paul_state, workspace_root):
+                results.append(paul_state)
     except (OSError, PermissionError):
         pass
-    return results
+    return sorted(results)
+
+
+def read_paul_state(paul_state_path: Path) -> dict:
+    """Read and normalize modern TOML or legacy JSON PAUL state."""
+    if paul_state_path.suffix == ".toml":
+        with open(paul_state_path, "rb") as handle:
+            paul_data = tomllib.load(handle)
+    else:
+        with open(paul_state_path, "r", encoding="utf-8") as handle:
+            paul_data = json.load(handle)
+
+    milestone = paul_data.get("milestone", {})
+    stats = paul_data.get("stats", {})
+    phase = dict(paul_data.get("phase", {}))
+    timestamps = dict(paul_data.get("timestamps", {}))
+    if phase.get("total") is None:
+        total_phases = stats.get("total_phases")
+        phase["total"] = total_phases if total_phases is not None else milestone.get("phases")
+    if timestamps.get("updated_at") is None:
+        last_activity = stats.get("last_activity")
+        if hasattr(last_activity, "isoformat"):
+            last_activity = last_activity.isoformat()
+        timestamps["updated_at"] = last_activity
+
+    return {**paul_data, "phase": phase, "timestamps": timestamps}
 
 
 def should_sync(paul_data: dict) -> bool:
@@ -70,7 +102,7 @@ def should_sync(paul_data: dict) -> bool:
 
 
 def sync_to_workspace(satellites: dict, paul_data: dict, name: str) -> bool:
-    """Sync paul.json state to workspace.json satellite entry. Returns True if changed."""
+    """Sync PAUL state to workspace.json satellite entry. Returns True if changed."""
     if name not in satellites:
         return False
 
@@ -100,7 +132,7 @@ def sync_to_workspace(satellites: dict, paul_data: dict, name: str) -> bool:
 
 
 def build_paul_field(paul_data: dict, name: str, sat_path: str) -> dict:
-    """Build a standardized paul field from paul.json data."""
+    """Build a standardized paul field from normalized PAUL state."""
     phase = paul_data.get("phase", {})
     loop = paul_data.get("loop", {})
     handoff = paul_data.get("handoff", {})
@@ -137,7 +169,7 @@ def find_project_by_path(items: list, sat_path: str):
 
 
 def sync_to_projects(paul_data: dict, name: str, sat_path: str, projects_data: dict) -> str:
-    """Sync paul.json state to matching project in projects.json.
+    """Sync normalized PAUL state to matching project in projects.json.
     Returns: 'updated', 'created', or 'none'."""
     items = projects_data.get("items", [])
 
@@ -226,16 +258,15 @@ def main():
         except (json.JSONDecodeError, OSError):
             projects_data = None
 
-    paul_files = find_paul_json_files(WORKSPACE_ROOT)
+    paul_files = find_paul_state_files(WORKSPACE_ROOT)
 
     # Collect paul data for sync pass
     paul_registry = {}  # name → paul_data
 
-    for paul_json_path in paul_files:
+    for paul_state_path in paul_files:
         try:
-            with open(paul_json_path, "r") as f:
-                paul_data = json.load(f)
-        except (json.JSONDecodeError, OSError):
+            paul_data = read_paul_state(paul_state_path)
+        except (json.JSONDecodeError, tomllib.TOMLDecodeError, OSError):
             continue  # Malformed or unreadable — skip silently
 
         name = paul_data.get("name")
@@ -244,7 +275,7 @@ def main():
 
         paul_registry[name] = paul_data
 
-        # Read last_activity from paul.json timestamps (if present)
+        # Read normalized last_activity from the PAUL state (if present)
         last_activity = paul_data.get("timestamps", {}).get("updated_at")
 
         if name in satellites:
@@ -255,7 +286,7 @@ def main():
             continue
 
         # New satellite — derive relative path
-        project_dir = paul_json_path.parent.parent
+        project_dir = paul_state_path.parent.parent
         try:
             rel_path = str(project_dir.relative_to(WORKSPACE_ROOT))
         except ValueError:
@@ -276,7 +307,7 @@ def main():
         new_registrations.append(name)
         workspace_changed = True
 
-    # --- Sync pass: paul.json → workspace.json + projects.json ---
+    # --- Sync pass: PAUL state → workspace.json + projects.json ---
     for name, paul_data in paul_registry.items():
         if not should_sync(paul_data):
             continue  # Opt-out — skip sync

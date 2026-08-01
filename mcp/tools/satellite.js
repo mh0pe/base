@@ -1,11 +1,13 @@
 /**
  * BASE Satellite Sync — Real-time PAUL project state sync
- * Reads paul.json from a satellite, syncs to workspace.json + projects.json
+ * Reads paul.toml (preferred) or legacy paul.json from a satellite, then syncs
+ * to workspace.json + projects.json.
  * Called by PAUL at end of each loop phase (plan, apply, unify, handoff)
  */
 
 import { readFileSync, writeFileSync, existsSync } from 'fs';
 import { join, relative } from 'path';
+import TOML from '@iarna/toml';
 import { validateSurface } from './validate.js';
 
 function debugLog(...args) {
@@ -23,6 +25,29 @@ function readJson(filepath) {
     } catch (e) {
         return null;
     }
+}
+
+function readPaulState(filepath) {
+    const source = readFileSync(filepath, 'utf-8');
+    try {
+        return filepath.endsWith('.toml') ? TOML.parse(source) : JSON.parse(source);
+    } catch (error) {
+        throw new Error(`Cannot parse PAUL state at ${filepath}: ${error.message}`);
+    }
+}
+
+function normalizePaulData(paulData) {
+    const milestone = paulData.milestone || {};
+    const stats = paulData.stats || {};
+    const phase = { ...(paulData.phase || {}) };
+    const timestamps = { ...(paulData.timestamps || {}) };
+
+    // paul.toml stores these values under [stats]; legacy paul.json stores
+    // them under phase/timestamps. Normalize both formats before syncing.
+    phase.total ??= stats.total_phases ?? milestone.phases ?? null;
+    timestamps.updated_at ??= stats.last_activity ?? null;
+
+    return { ...paulData, phase, timestamps };
 }
 
 function writeJson(filepath, data) {
@@ -83,16 +108,15 @@ function findProjectBySatelliteName(items, name) {
 // SYNC LOGIC
 // ============================================================
 
-function syncSatellite(paulJsonPath, workspacePath) {
-    const paulData = readJson(paulJsonPath);
-    if (!paulData) throw new Error(`Cannot read paul.json at ${paulJsonPath}`);
+function syncSatellite(paulStatePath, workspacePath) {
+    const paulData = normalizePaulData(readPaulState(paulStatePath));
 
     const name = paulData.name;
-    if (!name) throw new Error('paul.json has no name field');
+    if (!name) throw new Error('PAUL state has no name field');
 
     // Derive paths
-    const projectDir = join(paulJsonPath, '..', '..');
-    const satellitePath = relative(workspacePath, projectDir);
+    const projectDir = join(paulStatePath, '..', '..');
+    const satellitePath = relative(workspacePath, projectDir) || '.';
     const phase = paulData.phase || {};
     const loop = paulData.loop || {};
     const handoff = paulData.handoff || {};
@@ -209,7 +233,7 @@ function syncSatellite(paulJsonPath, workspacePath) {
 export const TOOLS = [
     {
         name: "base_sync_satellite",
-        description: "Sync a PAUL satellite's state to workspace.json and projects.json. Reads paul.json, updates satellite entry and matching project. Creates project entry if none exists. Call after plan/apply/unify/handoff.",
+        description: "Sync a PAUL satellite's state to workspace.json and projects.json. Prefers paul.toml and falls back to legacy paul.json, updates the satellite entry and matching project, and creates a project entry if none exists. Call after plan/apply/unify/handoff.",
         inputSchema: {
             type: "object",
             properties: {
@@ -230,12 +254,16 @@ export function handleTool(name, args, workspacePath) {
             const { path: projectPath } = args;
             if (!projectPath) throw new Error('Missing required parameter: path');
 
-            const paulJsonPath = join(workspacePath, projectPath, '.paul', 'paul.json');
-            if (!existsSync(paulJsonPath)) {
-                throw new Error(`No paul.json found at ${projectPath}/.paul/paul.json`);
+            const paulDir = join(workspacePath, projectPath, '.paul');
+            const paulTomlPath = join(paulDir, 'paul.toml');
+            const paulJsonPath = join(paulDir, 'paul.json');
+            const paulStatePath = existsSync(paulTomlPath) ? paulTomlPath : paulJsonPath;
+
+            if (!existsSync(paulStatePath)) {
+                throw new Error(`No paul.toml or paul.json found at ${projectPath}/.paul/`);
             }
 
-            return syncSatellite(paulJsonPath, workspacePath);
+            return syncSatellite(paulStatePath, workspacePath);
         }
         default:
             return null;

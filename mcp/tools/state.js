@@ -19,6 +19,21 @@ function getStatePath(workspacePath) {
     return join(workspacePath, '.base', 'data', 'state.json');
 }
 
+function readRequiredJson(filepath, label) {
+    if (!existsSync(filepath)) {
+        throw new Error(`${label} not found at ${filepath}`);
+    }
+    try {
+        const value = JSON.parse(readFileSync(filepath, 'utf-8'));
+        if (!value || typeof value !== 'object' || Array.isArray(value)) {
+            throw new Error('root value must be an object');
+        }
+        return value;
+    } catch (error) {
+        throw new Error(`Cannot parse ${label} at ${filepath}: ${error.message}`);
+    }
+}
+
 function readState(workspacePath) {
     const filepath = getStatePath(workspacePath);
     if (!existsSync(filepath)) {
@@ -47,6 +62,17 @@ function addDays(dateStr, days) {
 
 function todayStr() {
     return new Date().toISOString().split('T')[0];
+}
+
+function validatedDate(date) {
+    const value = date ?? todayStr();
+    const parsed = new Date(`${value}T00:00:00Z`);
+    if (!/^\d{4}-\d{2}-\d{2}$/.test(value)
+        || Number.isNaN(parsed.getTime())
+        || parsed.toISOString().split('T')[0] !== value) {
+        throw new Error('date must be a valid YYYY-MM-DD calendar date');
+    }
+    return value;
 }
 
 // ============================================================
@@ -84,6 +110,27 @@ export const TOOLS = [
             type: "object",
             properties: {},
             required: []
+        }
+    },
+    {
+        name: "base_record_carl_hygiene",
+        description: "Record a completed CARL hygiene review in workspace.json and state.json. Updates only the hygiene last-run date and operator-provided summary while preserving all other state.",
+        inputSchema: {
+            type: "object",
+            properties: {
+                summary: {
+                    type: "string",
+                    minLength: 1,
+                    maxLength: 4000,
+                    description: "Concise evidence summary of proposals, rules, and decisions reviewed"
+                },
+                date: {
+                    type: "string",
+                    pattern: "^\\d{4}-\\d{2}-\\d{2}$",
+                    description: "Optional completion date in YYYY-MM-DD form; defaults to today"
+                }
+            },
+            required: ["summary"]
         }
     },
     {
@@ -162,6 +209,57 @@ function handleRecordGroom(workspacePath) {
     };
 }
 
+function handleRecordCarlHygiene(args = {}, workspacePath) {
+    const summary = typeof args.summary === 'string' ? args.summary.trim() : '';
+    if (!summary) throw new Error('Missing required parameter: summary');
+    if (summary.length > 4000) throw new Error('summary must be 4000 characters or fewer');
+
+    const runDate = validatedDate(args.date);
+    const statePath = getStatePath(workspacePath);
+    const manifestPath = join(workspacePath, '.base', 'workspace.json');
+
+    // Read and validate both files before writing either one so malformed or
+    // incomplete workspace state cannot produce a one-sided hygiene record.
+    const data = readRequiredJson(statePath, 'state.json');
+    const manifest = readRequiredJson(manifestPath, 'workspace.json');
+    if (!manifest.carl_hygiene
+        || typeof manifest.carl_hygiene !== 'object'
+        || Array.isArray(manifest.carl_hygiene)) {
+        throw new Error('workspace.json has no carl_hygiene configuration');
+    }
+
+    if (data.groom !== undefined
+        && (typeof data.groom !== 'object' || data.groom === null || Array.isArray(data.groom))) {
+        throw new Error('state.json groom field must be an object');
+    }
+    if (data.carl_hygiene !== undefined
+        && (typeof data.carl_hygiene !== 'object'
+            || data.carl_hygiene === null
+            || Array.isArray(data.carl_hygiene))) {
+        throw new Error('state.json carl_hygiene field must be an object');
+    }
+
+    if (!data.groom) data.groom = {};
+    data.groom.last_carl_hygiene = runDate;
+    data.groom.carl_hygiene_note = summary;
+
+    // state.json powers pulse hooks while workspace.json owns the operator
+    // configuration. Keep their last-run marker aligned without replacing
+    // either file's other fields.
+    data.carl_hygiene = {
+        ...(data.carl_hygiene || {}),
+        ...manifest.carl_hygiene,
+        last_run: runDate,
+    };
+    manifest.carl_hygiene.last_run = runDate;
+
+    writeState(workspacePath, data);
+    writeFileSync(manifestPath, JSON.stringify(manifest, null, 2) + '\n', 'utf-8');
+    debugLog('Recorded CARL hygiene:', runDate);
+
+    return { last_run: runDate, summary };
+}
+
 function handleUpdateArea(args, workspacePath) {
     const { area, data: updateData } = args;
     if (!area) throw new Error('Missing required parameter: area');
@@ -193,6 +291,8 @@ export function handleTool(name, args, workspacePath) {
             return handleUpdateDrift(args, workspacePath);
         case 'base_record_groom':
             return handleRecordGroom(workspacePath);
+        case 'base_record_carl_hygiene':
+            return handleRecordCarlHygiene(args, workspacePath);
         case 'base_update_area':
             return handleUpdateArea(args, workspacePath);
         default:

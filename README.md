@@ -376,7 +376,7 @@ A unified interface for all workspace data. 20 tools across 5 modules:
 |--------|-------|-------------|
 | **Projects** | `base_list_projects`, `base_get_project`, `base_add_project`, `base_update_project`, `base_archive_project`, `base_search_projects` | Hierarchy-aware CRUD — initiatives, projects, tasks. Auto-ID by type (INI/PRJ/TSK). Filter by status, priority, parent, category. |
 | **Entities** | `base_list_entities`, `base_add_entity`, `base_update_entity`, `base_link_entity` | People and organization management with relational links to projects |
-| **State** | `base_get_state`, `base_update_drift`, `base_record_groom`, `base_update_area` | Workspace health, drift tracking, groom scheduling |
+| **State** | `base_get_state`, `base_update_drift`, `base_record_groom`, `base_record_carl_hygiene`, `base_update_area` | Workspace health, drift tracking, groom scheduling, CARL hygiene logging |
 | **Operator** | `base_get_operator`, `base_update_operator` | Read/update operator profile (north star, values, vision, pitch) |
 | **PSMM** | `base_psmm_log`, `base_psmm_get`, `base_psmm_list`, `base_psmm_clean` | Per-session meta memory — log and manage session moments |
 
@@ -508,8 +508,8 @@ BASE is designed to work alongside PAUL as the workspace layer that ties everyth
 
 BASE automatically detects and registers PAUL projects across your workspace:
 
-- On session start, a hook scans your workspace for `.paul/paul.json` files and registers any new PAUL projects in `workspace.json` automatically
-- If you started using PAUL before BASE, update PAUL to the latest version and run `/paul:register` in any PAUL project directory to generate the `paul.json` manifest. The next time you start a session in your BASE workspace, it picks it up automatically.
+- On session start, a hook scans your workspace for `.paul/paul.toml` files, falling back to legacy `.paul/paul.json`, and registers new PAUL projects in `workspace.json` automatically
+- If you started using PAUL before BASE, ensure each project has either the current `paul.toml` manifest or a legacy `paul.json` manifest. The next BASE session picks it up automatically.
 - Activity timestamps from each project flow into the workspace manifest so BASE always knows when each project was last touched
 - During weekly groom, BASE checks each registered project's health:
   - **Stuck?** — Planning done but implementation stalled for 7+ days

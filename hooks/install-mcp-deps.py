@@ -2,7 +2,7 @@
 """
 SessionStart hook: install base-mcp npm dependencies into CLAUDE_PLUGIN_DATA.
 
-Idempotent: exits 0 immediately if @modelcontextprotocol/sdk is already present.
+Idempotent: exits 0 immediately if every declared MCP dependency is present.
 Fail-open: warns to stderr and exits 0 on any error so the session always starts.
 
 Strategy:
@@ -21,10 +21,26 @@ import os
 import sys
 import shutil
 import subprocess
+import json
 
 
 def warn(msg):
     print(f"[install-mcp-deps] WARNING: {msg}", file=sys.stderr)
+
+
+def dependencies_installed(package_json_path, plugin_data):
+    """Return True only when every dependency declared by the MCP is installed."""
+    try:
+        with open(package_json_path, encoding="utf-8") as handle:
+            dependencies = json.load(handle).get("dependencies", {})
+    except (OSError, json.JSONDecodeError):
+        return False
+
+    node_modules = os.path.join(plugin_data, "node_modules")
+    return all(
+        os.path.isdir(os.path.join(node_modules, *name.split("/")))
+        for name in dependencies
+    )
 
 
 def main():
@@ -39,21 +55,21 @@ def main():
         warn("CLAUDE_PLUGIN_ROOT is not set; skipping MCP deps install.")
         sys.exit(0)
 
-    sdk_marker = os.path.join(plugin_data, "node_modules", "@modelcontextprotocol", "sdk")
     # MCP server lives at ${CLAUDE_PLUGIN_ROOT}/mcp/index.js — symlink goes next to it
     mcp_dir = os.path.join(plugin_root, "mcp")
     mcp_nm = os.path.join(mcp_dir, "node_modules")
-
-    # Idempotent: if sdk already installed, just (re)assert symlink and exit
-    if os.path.isdir(sdk_marker):
-        # Re-assert symlink so it survives if the plugin dir was refreshed
-        _assert_symlink(mcp_nm, plugin_data)
-        sys.exit(0)
 
     # Source package.json is at ${CLAUDE_PLUGIN_ROOT}/mcp/package.json
     src_pkg = os.path.join(mcp_dir, "package.json")
     if not os.path.isfile(src_pkg):
         warn(f"package.json not found at {src_pkg}; skipping.")
+        sys.exit(0)
+
+    # Re-run npm install when a release adds any dependency. Checking only the
+    # SDK marker left upgraded plugin data missing newer runtime packages.
+    if dependencies_installed(src_pkg, plugin_data):
+        # Re-assert symlink so it survives if the plugin dir was refreshed
+        _assert_symlink(mcp_nm, plugin_data)
         sys.exit(0)
 
     try:

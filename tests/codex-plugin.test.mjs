@@ -83,6 +83,6 @@ test("Codex launcher initializes BASE and exposes all tools", async (t) => {
     .map((line) => JSON.parse(line))
     .find((message) => message.id === 2);
   assert.ok(toolsLine, `missing tools/list response; stderr:\n${stderr}`);
-  assert.equal(toolsLine.result.tools.length, 21);
+  assert.equal(toolsLine.result.tools.length, 22);
   assert.match(stderr, new RegExp(`Workspace: ${workspace.replaceAll("\\", "\\\\")}`));
 });
