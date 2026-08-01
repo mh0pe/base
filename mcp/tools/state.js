@@ -3,7 +3,15 @@
  * Workspace health, drift tracking, groom scheduling
  */
 
-import { readFileSync, writeFileSync, existsSync } from 'fs';
+import {
+    chmodSync,
+    existsSync,
+    readFileSync,
+    renameSync,
+    statSync,
+    unlinkSync,
+    writeFileSync,
+} from 'fs';
 import { join } from 'path';
 import { validateSurface } from './validate.js';
 
@@ -31,6 +39,75 @@ function readRequiredJson(filepath, label) {
         return value;
     } catch (error) {
         throw new Error(`Cannot parse ${label} at ${filepath}: ${error.message}`);
+    }
+}
+
+function replaceJsonFiles(entries) {
+    const token = `${process.pid}-${Date.now()}-${Math.random().toString(16).slice(2)}`;
+    const staged = [];
+    const backups = [];
+
+    const removeIfPresent = (filepath) => {
+        if (existsSync(filepath)) unlinkSync(filepath);
+    };
+
+    try {
+        // Prepare every replacement beside its destination before moving any
+        // live file. A permission or disk error therefore leaves both sources
+        // untouched instead of recording hygiene in only one BASE surface.
+        for (const [index, entry] of entries.entries()) {
+            const tempPath = `${entry.filepath}.${token}-${index}.tmp`;
+            const mode = statSync(entry.filepath).mode & 0o777;
+            writeFileSync(tempPath, entry.contents, {
+                encoding: 'utf-8',
+                flag: 'wx',
+                mode,
+            });
+            chmodSync(tempPath, mode);
+            staged.push({ ...entry, tempPath });
+        }
+
+        // Retain the originals until every staged replacement is ready. If a
+        // later rename fails, the catch block restores the complete pair.
+        for (const [index, entry] of staged.entries()) {
+            const backupPath = `${entry.filepath}.${token}-${index}.bak`;
+            renameSync(entry.filepath, backupPath);
+            backups.push({ filepath: entry.filepath, backupPath });
+        }
+
+        for (const entry of staged) {
+            renameSync(entry.tempPath, entry.filepath);
+        }
+    } catch (error) {
+        for (const entry of [...backups].reverse()) {
+            try {
+                removeIfPresent(entry.filepath);
+                if (existsSync(entry.backupPath)) {
+                    renameSync(entry.backupPath, entry.filepath);
+                }
+            } catch {
+                // Keep the original error; a surviving .bak file remains
+                // recoverable if an external filesystem fault blocks rollback.
+            }
+        }
+        for (const entry of staged) {
+            try {
+                removeIfPresent(entry.tempPath);
+            } catch {
+                // Best-effort cleanup only; never hide the write failure.
+            }
+        }
+        throw error;
+    }
+
+    // Backups are no longer needed after both replacements land. Cleanup is
+    // best effort so a harmless unlink failure cannot roll back valid writes.
+    for (const entry of backups) {
+        try {
+            removeIfPresent(entry.backupPath);
+        } catch {
+            // A leftover backup is safer than reporting a false write failure.
+        }
     }
 }
 
@@ -253,8 +330,12 @@ function handleRecordCarlHygiene(args = {}, workspacePath) {
     };
     manifest.carl_hygiene.last_run = runDate;
 
-    writeState(workspacePath, data);
-    writeFileSync(manifestPath, JSON.stringify(manifest, null, 2) + '\n', 'utf-8');
+    data.last_modified = new Date().toISOString();
+    validateSurface('state', data);
+    replaceJsonFiles([
+        { filepath: statePath, contents: JSON.stringify(data, null, 2) },
+        { filepath: manifestPath, contents: JSON.stringify(manifest, null, 2) + '\n' },
+    ]);
     debugLog('Recorded CARL hygiene:', runDate);
 
     return { last_run: runDate, summary };

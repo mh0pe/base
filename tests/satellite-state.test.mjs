@@ -1,5 +1,5 @@
 import assert from "node:assert/strict";
-import { mkdir, mkdtemp, readFile, rm, writeFile } from "node:fs/promises";
+import { chmod, mkdir, mkdtemp, readFile, rm, writeFile } from "node:fs/promises";
 import os from "node:os";
 import path from "node:path";
 import test from "node:test";
@@ -236,4 +236,36 @@ test("base_record_carl_hygiene validates before mutating either file", async (t)
   );
   assert.equal(await readFile(manifestPath, "utf8"), beforeManifest);
   assert.equal(await readFile(statePath, "utf8"), malformedState);
+});
+
+test("base_record_carl_hygiene does not leave a one-sided record on write failure", async (t) => {
+  const workspace = await makeWorkspace(t);
+  const basePath = path.join(workspace, ".base");
+  const manifestPath = path.join(basePath, "workspace.json");
+  const statePath = path.join(basePath, "data", "state.json");
+  await writeJson(manifestPath, { carl_hygiene: { last_run: null }, preserved: true });
+  await writeJson(statePath, { groom: {}, preserved: true });
+  const beforeManifest = await readFile(manifestPath, "utf8");
+  const beforeState = await readFile(statePath, "utf8");
+
+  // state.json's directory remains writable while workspace.json cannot be
+  // replaced. The former implementation updated state.json before failing on
+  // workspace.json, leaving the two last-run markers inconsistent.
+  await chmod(manifestPath, 0o444);
+  await chmod(basePath, 0o555);
+  try {
+    assert.throws(
+      () => handleState("base_record_carl_hygiene", {
+        date: "2026-08-01",
+        summary: "must remain all-or-nothing",
+      }, workspace),
+      /EACCES|permission denied/,
+    );
+  } finally {
+    await chmod(basePath, 0o755);
+    await chmod(manifestPath, 0o644);
+  }
+
+  assert.equal(await readFile(manifestPath, "utf8"), beforeManifest);
+  assert.equal(await readFile(statePath, "utf8"), beforeState);
 });
