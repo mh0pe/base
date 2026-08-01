@@ -128,7 +128,7 @@ groom = false
   assert.equal(projects.items[0].paul.preserved, true);
   assert.equal(projects.items[0].paul.milestone, "M-HARDEN-0722");
   assert.equal(projects.items[0].paul.phase, "QUALITY-codebase-hardening");
-  assert.equal(projects.items[0].paul.completed_phases, 118);
+  assert.equal(projects.items[0].paul.completed_phases, null);
   assert.equal(projects.items[0].paul.total_phases, 1);
   assert.equal(projects.items[0].paul.last_update, "2026-07-29T09:41:02Z");
   assert.equal(projects.items[0].paul.location, "./");
@@ -226,6 +226,18 @@ test("base_sync_satellite rejects malformed table shapes before writes", async (
   assert.throws(
     () => handleSatellite("base_sync_satellite", { path: "." }, workspace),
     /phase must be a table\/object/,
+  );
+  assert.equal(await readFile(manifestPath, "utf8"), manifestBefore);
+  assert.equal(await readFile(projectsPath, "utf8"), projectsBefore);
+
+  await writeFile(
+    path.join(workspace, ".paul", "paul.toml"),
+    'name = ["not", "a", "string"]\n',
+    "utf8",
+  );
+  assert.throws(
+    () => handleSatellite("base_sync_satellite", { path: "." }, workspace),
+    /name must be a non-empty string/,
   );
   assert.equal(await readFile(manifestPath, "utf8"), manifestBefore);
   assert.equal(await readFile(projectsPath, "utf8"), projectsBefore);

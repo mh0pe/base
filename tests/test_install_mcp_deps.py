@@ -111,7 +111,7 @@ groom = false
                 paul_data, "pact", "."
             )
             self.assertEqual(paul_field["location"], "./")
-            self.assertEqual(paul_field["completed_phases"], 118)
+            self.assertIsNone(paul_field["completed_phases"])
             self.assertEqual(paul_field["total_phases"], 1)
             self.assertFalse(paul_data["satellite"]["groom"])
 
@@ -131,6 +131,12 @@ groom = false
             bad_paul.mkdir(parents=True)
             (bad_paul / "paul.toml").write_text(
                 'name = "bad"\nphase = "not-a-table"\n', encoding="utf-8"
+            )
+
+            bad_name_paul = root / "b-bad-name" / ".paul"
+            bad_name_paul.mkdir(parents=True)
+            (bad_name_paul / "paul.toml").write_text(
+                'name = ["not", "a", "string"]\n', encoding="utf-8"
             )
 
             good_paul = root / "z-good" / ".paul"
@@ -156,6 +162,7 @@ groom = false
                 (base_directory / "workspace.json").read_text(encoding="utf-8")
             )
             self.assertNotIn("bad", manifest["satellites"])
+            self.assertNotIn("b-bad-name", manifest["satellites"])
             self.assertIn("good", manifest["satellites"])
             self.assertFalse(manifest["satellites"]["good"]["groom_check"])
 

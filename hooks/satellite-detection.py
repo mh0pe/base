@@ -99,8 +99,24 @@ def read_paul_state(paul_state_path: Path) -> dict:
         tables[table_name] = table
 
     groom = tables["satellite"].get("groom")
+    name = paul_data.get("name")
+    if name is not None and (not isinstance(name, str) or not name.strip()):
+        raise ValueError("PAUL state name must be a non-empty string")
     if groom is not None and not isinstance(groom, bool):
         raise ValueError("PAUL state satellite.groom must be a boolean")
+    for table_name, field_name in (
+        ("milestone", "phases"),
+        ("phase", "number"),
+        ("phase", "total"),
+        ("stats", "total_phases"),
+    ):
+        value = tables[table_name].get(field_name)
+        if value is not None and (
+            not isinstance(value, int) or isinstance(value, bool) or value < 0
+        ):
+            raise ValueError(
+                f"PAUL state {table_name}.{field_name} must be a non-negative integer"
+            )
 
     milestone = tables["milestone"]
     stats = tables["stats"]
@@ -168,7 +184,24 @@ def build_paul_field(paul_data: dict, name: str, sat_path: str) -> dict:
     milestone = paul_data.get("milestone", {})
     timestamps = paul_data.get("timestamps", {})
 
-    completed = phase.get("number", 1) if phase.get("status") == "complete" else max(0, (phase.get("number", 1) or 1) - 1)
+    if "phases" in milestone:
+        # PAUL phase numbers are lifetime/global, while milestone.phases is
+        # scoped to the current milestone. Only report a numerator when the
+        # milestone status makes it unambiguous.
+        if milestone.get("status") == "complete":
+            completed = milestone["phases"]
+        elif milestone.get("status") == "not_started" or milestone["phases"] == 0:
+            completed = 0
+        else:
+            completed = None
+    else:
+        # Legacy paul.json stored no current-milestone denominator. Retain its
+        # historical phase-number behavior for backwards compatibility.
+        completed = (
+            phase.get("number", 1)
+            if phase.get("status") == "complete"
+            else max(0, (phase.get("number", 1) or 1) - 1)
+        )
 
     paul_field = {
         "is_paul_project": True,

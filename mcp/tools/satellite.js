@@ -58,8 +58,24 @@ function normalizePaulData(paulData) {
     }
 
     const satellite = paulTable(paulData, 'satellite');
+    if (Object.hasOwn(paulData, 'name')
+        && (typeof paulData.name !== 'string' || paulData.name.trim() === '')) {
+        throw new Error('PAUL state name must be a non-empty string');
+    }
     if (Object.hasOwn(satellite, 'groom') && typeof satellite.groom !== 'boolean') {
         throw new Error('PAUL state satellite.groom must be a boolean');
+    }
+    for (const [tableName, table, fieldName] of [
+        ['milestone', milestone, 'phases'],
+        ['phase', phase, 'number'],
+        ['phase', phase, 'total'],
+        ['stats', stats, 'total_phases'],
+    ]) {
+        const value = table[fieldName];
+        if (value !== undefined
+            && (!Number.isInteger(value) || value < 0)) {
+            throw new Error(`PAUL state ${tableName}.${fieldName} must be a non-negative integer`);
+        }
     }
 
     // paul.toml stores these values under [stats]; legacy paul.json stores
@@ -88,9 +104,21 @@ function buildPaulField(paulData, satelliteName, satellitePath) {
     const milestone = paulData.milestone || {};
     const timestamps = paulData.timestamps || {};
 
-    const completedPhases = phase.status === 'complete'
-        ? phase.number
-        : Math.max(0, (phase.number || 1) - 1);
+    let completedPhases;
+    if (Object.hasOwn(milestone, 'phases')) {
+        // PAUL phase numbers are lifetime/global, while milestone.phases is
+        // scoped to the current milestone. Only report a numerator when the
+        // milestone status makes it unambiguous.
+        if (milestone.status === 'complete') completedPhases = milestone.phases;
+        else if (milestone.status === 'not_started' || milestone.phases === 0) completedPhases = 0;
+        else completedPhases = null;
+    } else {
+        // Legacy paul.json stored no current-milestone denominator. Retain its
+        // historical phase-number behavior for backwards compatibility.
+        completedPhases = phase.status === 'complete'
+            ? phase.number
+            : Math.max(0, (phase.number || 1) - 1);
+    }
 
     const paulField = {
         is_paul_project: true,
