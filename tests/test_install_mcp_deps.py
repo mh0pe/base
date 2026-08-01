@@ -1,6 +1,9 @@
 import importlib.util
 import json
 import os
+import shutil
+import subprocess
+import sys
 import tempfile
 import unittest
 from pathlib import Path
@@ -85,6 +88,9 @@ position = "APPLY"
 [stats]
 total_phases = 395
 last_activity = "2026-07-29T09:41:02Z"
+
+[satellite]
+groom = false
 """.strip(),
                 encoding="utf-8",
             )
@@ -96,7 +102,7 @@ last_activity = "2026-07-29T09:41:02Z"
             self.assertEqual(state_files, [paul_directory / "paul.toml"])
             paul_data = SATELLITE_DETECTION.read_paul_state(state_files[0])
             self.assertEqual(paul_data["name"], "pact")
-            self.assertEqual(paul_data["phase"]["total"], 395)
+            self.assertEqual(paul_data["phase"]["total"], 1)
             self.assertEqual(
                 paul_data["timestamps"]["updated_at"],
                 "2026-07-29T09:41:02Z",
@@ -106,7 +112,79 @@ last_activity = "2026-07-29T09:41:02Z"
             )
             self.assertEqual(paul_field["location"], "./")
             self.assertEqual(paul_field["completed_phases"], 118)
-            self.assertEqual(paul_field["total_phases"], 395)
+            self.assertEqual(paul_field["total_phases"], 1)
+            self.assertFalse(paul_data["satellite"]["groom"])
+
+    def test_invalid_toml_satellite_does_not_abort_later_valid_satellite(self):
+        with tempfile.TemporaryDirectory() as temporary_directory:
+            root = Path(temporary_directory)
+            base_directory = root / ".base"
+            (base_directory / "data").mkdir(parents=True)
+            (base_directory / "workspace.json").write_text(
+                json.dumps({"satellites": {}}), encoding="utf-8"
+            )
+            (base_directory / "data" / "projects.json").write_text(
+                json.dumps({"items": []}), encoding="utf-8"
+            )
+
+            bad_paul = root / "a-bad" / ".paul"
+            bad_paul.mkdir(parents=True)
+            (bad_paul / "paul.toml").write_text(
+                'name = "bad"\nphase = "not-a-table"\n', encoding="utf-8"
+            )
+
+            good_paul = root / "z-good" / ".paul"
+            good_paul.mkdir(parents=True)
+            (good_paul / "paul.toml").write_text(
+                'name = "good"\n[milestone]\nphases = 2\n[satellite]\ngroom = false\n',
+                encoding="utf-8",
+            )
+
+            environment = os.environ.copy()
+            environment["CLAUDE_PROJECT_DIR"] = str(root)
+            python_executable = shutil.which("python3.11") or sys.executable
+            result = subprocess.run(
+                [python_executable, str(SATELLITE_MODULE_PATH)],
+                capture_output=True,
+                text=True,
+                timeout=10,
+                env=environment,
+            )
+
+            self.assertEqual(result.returncode, 0, result.stderr)
+            manifest = json.loads(
+                (base_directory / "workspace.json").read_text(encoding="utf-8")
+            )
+            self.assertNotIn("bad", manifest["satellites"])
+            self.assertIn("good", manifest["satellites"])
+            self.assertFalse(manifest["satellites"]["good"]["groom_check"])
+
+    def test_modern_toml_does_not_erase_legacy_only_workspace_fields(self):
+        satellites = {
+            "pact": {
+                "handoff": True,
+                "last_plan_completed_at": "2026-07-01T00:00:00Z",
+                "next_action": "Preserve me",
+                "groom_check": True,
+            }
+        }
+        paul_data = {
+            "phase": {"name": "Apply", "number": 2, "status": "in_progress"},
+            "loop": {"position": "APPLY"},
+            "handoff": {},
+            "satellite": {"groom": False},
+        }
+
+        self.assertTrue(
+            SATELLITE_DETECTION.sync_to_workspace(satellites, paul_data, "pact")
+        )
+        self.assertTrue(satellites["pact"]["handoff"])
+        self.assertEqual(
+            satellites["pact"]["last_plan_completed_at"],
+            "2026-07-01T00:00:00Z",
+        )
+        self.assertEqual(satellites["pact"]["next_action"], "Preserve me")
+        self.assertFalse(satellites["pact"]["groom_check"])
 
     def test_falls_back_to_legacy_paul_json(self):
         with tempfile.TemporaryDirectory() as temporary_directory:
@@ -166,6 +244,33 @@ last_activity = "2020-01-01T00:00:00Z"
 
             result = BASE_PULSE_CHECK.recalculate_drift(state)
             self.assertEqual(result["drift"]["indicators"]["stale_satellites"], 1)
+
+    def test_malformed_toml_satellite_does_not_abort_pulse(self):
+        malformed_documents = (
+            'name = "pact"\nstats = "not-a-table"\n',
+            'name = "pact"\n[stats]\nlast_activity = 123\n',
+        )
+        for document in malformed_documents:
+            with self.subTest(document=document), tempfile.TemporaryDirectory() as temporary_directory:
+                root = Path(temporary_directory)
+                paul_directory = root / ".paul"
+                paul_directory.mkdir()
+                (paul_directory / "paul.toml").write_text(
+                    document, encoding="utf-8"
+                )
+
+                BASE_PULSE_CHECK.WORKSPACE_ROOT = root
+                BASE_PULSE_CHECK.STATE_FILE = root / ".base" / "data" / "state.json"
+                BASE_PULSE_CHECK.PROJECTS_FILE = (
+                    root / ".base" / "data" / "projects.json"
+                )
+                BASE_PULSE_CHECK.STATE_FILE.parent.mkdir(parents=True)
+                state = {"satellites": {"pact": {"path": "."}}}
+
+                result = BASE_PULSE_CHECK.recalculate_drift(state)
+                self.assertEqual(
+                    result["drift"]["indicators"]["stale_satellites"], 0
+                )
 
 
 if __name__ == "__main__":

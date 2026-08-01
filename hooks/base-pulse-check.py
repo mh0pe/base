@@ -123,7 +123,14 @@ def recalculate_drift(state):
                     updated_date = datetime.fromisoformat(ts).date()
                     if (now - updated_date).days > 14:
                         stale_sats += 1
-            except (json.JSONDecodeError, tomllib.TOMLDecodeError, OSError, ValueError):
+            except (
+                json.JSONDecodeError,
+                tomllib.TOMLDecodeError,
+                OSError,
+                ValueError,
+                TypeError,
+                AttributeError,
+            ):
                 pass
     indicators["stale_satellites"] = stale_sats
 

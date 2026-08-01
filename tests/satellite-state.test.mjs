@@ -42,7 +42,13 @@ function projectFixture(overrides = {}) {
     next: null,
     notes: [],
     tags: [],
-    paul: { satellite_name: "pact", preserved: true },
+    paul: {
+      satellite_name: "pact",
+      preserved: true,
+      handoff: true,
+      handoff_path: ".paul/HANDOFF.md",
+      last_plan_completed_at: "2026-07-01T00:00:00Z",
+    },
     relations: [],
     description: null,
     ...overrides,
@@ -52,7 +58,16 @@ function projectFixture(overrides = {}) {
 test("base_sync_satellite prefers paul.toml and maps current PAUL fields", async (t) => {
   const workspace = await makeWorkspace(t);
   await writeJson(path.join(workspace, ".base", "workspace.json"), {
-    satellites: { pact: { path: ".", engine: "paul", preserved: true } },
+    satellites: {
+      pact: {
+        path: ".",
+        engine: "paul",
+        preserved: true,
+        groom_check: true,
+        handoff: true,
+        last_plan_completed_at: "2026-07-01T00:00:00Z",
+      },
+    },
   });
   await writeJson(path.join(workspace, ".base", "data", "projects.json"), {
     version: 1,
@@ -78,6 +93,9 @@ position = "APPLY"
 [stats]
 total_phases = 395
 last_activity = "2026-07-29T09:41:02Z"
+
+[satellite]
+groom = false
 `, "utf8");
   await writeJson(path.join(workspace, ".paul", "paul.json"), {
     name: "stale-json",
@@ -97,21 +115,54 @@ last_activity = "2026-07-29T09:41:02Z"
     path: ".",
     engine: "paul",
     preserved: true,
+    groom_check: false,
     last_activity: "2026-07-29T09:41:02Z",
     phase_name: "QUALITY-codebase-hardening",
     phase_number: 119,
     phase_status: "in_progress",
     loop_position: "APPLY",
-    handoff: false,
+    handoff: true,
+    last_plan_completed_at: "2026-07-01T00:00:00Z",
   });
   const projects = await readJson(path.join(workspace, ".base", "data", "projects.json"));
   assert.equal(projects.items[0].paul.preserved, true);
   assert.equal(projects.items[0].paul.milestone, "M-HARDEN-0722");
   assert.equal(projects.items[0].paul.phase, "QUALITY-codebase-hardening");
   assert.equal(projects.items[0].paul.completed_phases, 118);
-  assert.equal(projects.items[0].paul.total_phases, 395);
+  assert.equal(projects.items[0].paul.total_phases, 1);
   assert.equal(projects.items[0].paul.last_update, "2026-07-29T09:41:02Z");
   assert.equal(projects.items[0].paul.location, "./");
+  assert.equal(projects.items[0].paul.handoff, true);
+  assert.equal(projects.items[0].paul.handoff_path, ".paul/HANDOFF.md");
+  assert.equal(
+    projects.items[0].paul.last_plan_completed_at,
+    "2026-07-01T00:00:00Z",
+  );
+});
+
+test("base_sync_satellite preserves a zero current-milestone phase total", async (t) => {
+  const workspace = await makeWorkspace(t);
+  await writeJson(path.join(workspace, ".base", "workspace.json"), { satellites: {} });
+  await writeJson(path.join(workspace, ".base", "data", "projects.json"), {
+    version: 1,
+    last_modified: null,
+    items: [],
+  });
+  await mkdir(path.join(workspace, ".paul"), { recursive: true });
+  await writeFile(path.join(workspace, ".paul", "paul.toml"), `
+name = "pact"
+[milestone]
+phases = 0
+[phase]
+number = 0
+name = "None"
+status = "not_started"
+`, "utf8");
+
+  handleSatellite("base_sync_satellite", { path: "." }, workspace);
+
+  const projects = await readJson(path.join(workspace, ".base", "data", "projects.json"));
+  assert.equal(projects.items[0].paul.total_phases, 0);
 });
 
 test("base_sync_satellite falls back to legacy paul.json", async (t) => {
@@ -155,6 +206,29 @@ test("base_sync_satellite reports both supported filenames when state is absent"
     () => handleSatellite("base_sync_satellite", { path: "apps/missing" }, workspace),
     /No paul\.toml or paul\.json found/,
   );
+});
+
+test("base_sync_satellite rejects malformed table shapes before writes", async (t) => {
+  const workspace = await makeWorkspace(t);
+  const manifestPath = path.join(workspace, ".base", "workspace.json");
+  const projectsPath = path.join(workspace, ".base", "data", "projects.json");
+  await writeJson(manifestPath, { satellites: { preserved: { path: "." } } });
+  await writeJson(projectsPath, { version: 1, last_modified: null, items: [] });
+  await mkdir(path.join(workspace, ".paul"), { recursive: true });
+  await writeFile(
+    path.join(workspace, ".paul", "paul.toml"),
+    'name = "pact"\nphase = "not-a-table"\n',
+    "utf8",
+  );
+  const manifestBefore = await readFile(manifestPath, "utf8");
+  const projectsBefore = await readFile(projectsPath, "utf8");
+
+  assert.throws(
+    () => handleSatellite("base_sync_satellite", { path: "." }, workspace),
+    /phase must be a table\/object/,
+  );
+  assert.equal(await readFile(manifestPath, "utf8"), manifestBefore);
+  assert.equal(await readFile(projectsPath, "utf8"), projectsBefore);
 });
 
 test("base_record_carl_hygiene updates only targeted state in both BASE files", async (t) => {

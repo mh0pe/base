@@ -36,15 +36,38 @@ function readPaulState(filepath) {
     }
 }
 
+function paulTable(paulData, name) {
+    const value = paulData[name] === undefined ? {} : paulData[name];
+    if (value === null || typeof value !== 'object' || Array.isArray(value)) {
+        throw new Error(`PAUL state ${name} must be a table/object`);
+    }
+    return value;
+}
+
 function normalizePaulData(paulData) {
-    const milestone = paulData.milestone || {};
-    const stats = paulData.stats || {};
-    const phase = { ...(paulData.phase || {}) };
-    const timestamps = { ...(paulData.timestamps || {}) };
+    if (paulData === null || typeof paulData !== 'object' || Array.isArray(paulData)) {
+        throw new Error('PAUL state root must be a table/object');
+    }
+
+    const milestone = paulTable(paulData, 'milestone');
+    const stats = paulTable(paulData, 'stats');
+    const phase = { ...paulTable(paulData, 'phase') };
+    const timestamps = { ...paulTable(paulData, 'timestamps') };
+    for (const name of ['loop', 'handoff', 'satellite', 'project']) {
+        paulTable(paulData, name);
+    }
+
+    const satellite = paulTable(paulData, 'satellite');
+    if (Object.hasOwn(satellite, 'groom') && typeof satellite.groom !== 'boolean') {
+        throw new Error('PAUL state satellite.groom must be a boolean');
+    }
 
     // paul.toml stores these values under [stats]; legacy paul.json stores
     // them under phase/timestamps. Normalize both formats before syncing.
-    phase.total ??= stats.total_phases ?? milestone.phases ?? null;
+    // milestone.phases is the denominator for the current milestone. The
+    // similarly named stats.total_phases is a lifetime completed counter and
+    // must not be displayed as the current milestone's total.
+    phase.total ??= milestone.phases ?? null;
     timestamps.updated_at ??= stats.last_activity ?? null;
 
     return { ...paulData, phase, timestamps };
@@ -69,7 +92,7 @@ function buildPaulField(paulData, satelliteName, satellitePath) {
         ? phase.number
         : Math.max(0, (phase.number || 1) - 1);
 
-    return {
+    const paulField = {
         is_paul_project: true,
         satellite_name: satelliteName,
         location: satellitePath + '/',
@@ -78,12 +101,19 @@ function buildPaulField(paulData, satelliteName, satellitePath) {
         phase_name: phase.name || null,
         loop_position: loop.position || 'IDLE',
         last_update: timestamps.updated_at || formatTimestamp(),
-        handoff: handoff.present || false,
-        handoff_path: handoff.path || null,
         completed_phases: completedPhases,
-        total_phases: phase.total || null,
-        last_plan_completed_at: paulData.last_plan_completed_at || null,
+        total_phases: phase.total ?? null,
     };
+
+    // These fields exist only in legacy paul.json. Do not erase a previously
+    // synced value merely because modern paul.toml has no equivalent field.
+    if (Object.hasOwn(handoff, 'present')) paulField.handoff = handoff.present;
+    if (Object.hasOwn(handoff, 'path')) paulField.handoff_path = handoff.path;
+    if (Object.hasOwn(paulData, 'last_plan_completed_at')) {
+        paulField.last_plan_completed_at = paulData.last_plan_completed_at;
+    }
+
+    return paulField;
 }
 
 function findProjectByPath(items, satellitePath) {
@@ -120,6 +150,7 @@ function syncSatellite(paulStatePath, workspacePath) {
     const phase = paulData.phase || {};
     const loop = paulData.loop || {};
     const handoff = paulData.handoff || {};
+    const satellite = paulData.satellite || {};
     const timestamps = paulData.timestamps || {};
 
     const result = { satellite: name, workspace_synced: false, project_synced: false, project_created: false };
@@ -134,12 +165,15 @@ function syncSatellite(paulStatePath, workspacePath) {
         if (sat) {
             // Update existing satellite
             sat.last_activity = timestamps.updated_at || formatTimestamp();
-            sat.phase_name = phase.name;
-            sat.phase_number = phase.number;
-            sat.phase_status = phase.status;
-            sat.loop_position = loop.position;
-            sat.handoff = handoff.present || false;
-            sat.last_plan_completed_at = paulData.last_plan_completed_at;
+            if (Object.hasOwn(phase, 'name')) sat.phase_name = phase.name;
+            if (Object.hasOwn(phase, 'number')) sat.phase_number = phase.number;
+            if (Object.hasOwn(phase, 'status')) sat.phase_status = phase.status;
+            if (Object.hasOwn(loop, 'position')) sat.loop_position = loop.position;
+            if (Object.hasOwn(handoff, 'present')) sat.handoff = handoff.present;
+            if (Object.hasOwn(paulData, 'last_plan_completed_at')) {
+                sat.last_plan_completed_at = paulData.last_plan_completed_at;
+            }
+            if (Object.hasOwn(satellite, 'groom')) sat.groom_check = satellite.groom;
             result.workspace_synced = true;
         } else {
             // New satellite — register
@@ -148,15 +182,19 @@ function syncSatellite(paulStatePath, workspacePath) {
                 engine: 'paul',
                 state: satellitePath + '/.paul/STATE.md',
                 registered: new Date().toISOString().split('T')[0],
-                groom_check: true,
+                groom_check: satellite.groom ?? true,
                 last_activity: timestamps.updated_at || formatTimestamp(),
                 phase_name: phase.name,
                 phase_number: phase.number,
                 phase_status: phase.status,
                 loop_position: loop.position,
-                handoff: handoff.present || false,
-                last_plan_completed_at: paulData.last_plan_completed_at,
             };
+            if (Object.hasOwn(handoff, 'present')) {
+                manifest.satellites[name].handoff = handoff.present;
+            }
+            if (Object.hasOwn(paulData, 'last_plan_completed_at')) {
+                manifest.satellites[name].last_plan_completed_at = paulData.last_plan_completed_at;
+            }
             result.workspace_synced = true;
         }
 

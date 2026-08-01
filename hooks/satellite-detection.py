@@ -79,13 +79,37 @@ def read_paul_state(paul_state_path: Path) -> dict:
         with open(paul_state_path, "r", encoding="utf-8") as handle:
             paul_data = json.load(handle)
 
-    milestone = paul_data.get("milestone", {})
-    stats = paul_data.get("stats", {})
-    phase = dict(paul_data.get("phase", {}))
-    timestamps = dict(paul_data.get("timestamps", {}))
+    if not isinstance(paul_data, dict):
+        raise ValueError("PAUL state root must be a table/object")
+
+    tables = {}
+    for table_name in (
+        "milestone",
+        "stats",
+        "phase",
+        "timestamps",
+        "loop",
+        "handoff",
+        "satellite",
+        "project",
+    ):
+        table = paul_data.get(table_name, {})
+        if not isinstance(table, dict):
+            raise ValueError(f"PAUL state {table_name} must be a table/object")
+        tables[table_name] = table
+
+    groom = tables["satellite"].get("groom")
+    if groom is not None and not isinstance(groom, bool):
+        raise ValueError("PAUL state satellite.groom must be a boolean")
+
+    milestone = tables["milestone"]
+    stats = tables["stats"]
+    phase = dict(tables["phase"])
+    timestamps = dict(tables["timestamps"])
     if phase.get("total") is None:
-        total_phases = stats.get("total_phases")
-        phase["total"] = total_phases if total_phases is not None else milestone.get("phases")
+        # milestone.phases is the current milestone denominator used by BASE.
+        # stats.total_phases is lifetime completed work across all milestones.
+        phase["total"] = milestone.get("phases")
     if timestamps.get("updated_at") is None:
         last_activity = stats.get("last_activity")
         if hasattr(last_activity, "isoformat"):
@@ -112,16 +136,21 @@ def sync_to_workspace(satellites: dict, paul_data: dict, name: str) -> bool:
     phase = paul_data.get("phase", {})
     loop = paul_data.get("loop", {})
     handoff = paul_data.get("handoff", {})
+    satellite = paul_data.get("satellite", {})
 
-    updates = {
-        "phase_name": phase.get("name"),
-        "phase_number": phase.get("number"),
-        "phase_status": phase.get("status"),
-        "loop_position": loop.get("position"),
-        "handoff": handoff.get("present", False),
-        "last_plan_completed_at": paul_data.get("last_plan_completed_at"),
-        "next_action": paul_data.get("next_action"),
-    }
+    updates = {}
+    for source, source_key, target_key in (
+        (phase, "name", "phase_name"),
+        (phase, "number", "phase_number"),
+        (phase, "status", "phase_status"),
+        (loop, "position", "loop_position"),
+        (handoff, "present", "handoff"),
+        (paul_data, "last_plan_completed_at", "last_plan_completed_at"),
+        (paul_data, "next_action", "next_action"),
+        (satellite, "groom", "groom_check"),
+    ):
+        if source_key in source:
+            updates[target_key] = source[source_key]
 
     for key, value in updates.items():
         if sat.get(key) != value:
@@ -141,7 +170,7 @@ def build_paul_field(paul_data: dict, name: str, sat_path: str) -> dict:
 
     completed = phase.get("number", 1) if phase.get("status") == "complete" else max(0, (phase.get("number", 1) or 1) - 1)
 
-    return {
+    paul_field = {
         "is_paul_project": True,
         "satellite_name": name,
         "location": sat_path.rstrip("/") + "/",
@@ -150,12 +179,20 @@ def build_paul_field(paul_data: dict, name: str, sat_path: str) -> dict:
         "phase_name": phase.get("name"),
         "loop_position": loop.get("position"),
         "last_update": timestamps.get("updated_at"),
-        "handoff": handoff.get("present", False),
-        "handoff_path": handoff.get("path"),
         "completed_phases": completed,
         "total_phases": phase.get("total"),
-        "last_plan_completed_at": paul_data.get("last_plan_completed_at"),
     }
+
+    # These fields exist only in legacy paul.json. Do not erase a previously
+    # synced value merely because modern paul.toml has no equivalent field.
+    if "present" in handoff:
+        paul_field["handoff"] = handoff["present"]
+    if "path" in handoff:
+        paul_field["handoff_path"] = handoff["path"]
+    if "last_plan_completed_at" in paul_data:
+        paul_field["last_plan_completed_at"] = paul_data["last_plan_completed_at"]
+
+    return paul_field
 
 
 def find_project_by_path(items: list, sat_path: str):
@@ -266,7 +303,7 @@ def main():
     for paul_state_path in paul_files:
         try:
             paul_data = read_paul_state(paul_state_path)
-        except (json.JSONDecodeError, tomllib.TOMLDecodeError, OSError):
+        except (json.JSONDecodeError, tomllib.TOMLDecodeError, OSError, TypeError, ValueError):
             continue  # Malformed or unreadable — skip silently
 
         name = paul_data.get("name")
@@ -298,7 +335,7 @@ def main():
             "engine": "paul",
             "state": f"{rel_path}/.paul/STATE.md",
             "registered": datetime.now().strftime("%Y-%m-%d"),
-            "groom_check": True,
+            "groom_check": paul_data.get("satellite", {}).get("groom", True),
         }
         if last_activity:
             entry["last_activity"] = last_activity
